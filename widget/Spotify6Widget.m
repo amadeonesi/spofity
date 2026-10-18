@@ -1,4 +1,4 @@
-// Spotify6Widget.m - Mitteilungszentrum-Widget (iOS 6 / WeeLoader): Cover, Titel, Artist, "Playing from …" und Zurück/Play/Weiter.
+// Spotify6Widget.m - Mitteilungszentrum-Widget (iOS 6): Cover, Titel, Artist, "Playing from …" und Zurück/Play/Weiter.
 // Läuft in SpringBoard. Daten kommen aus SBMediaController (dieselben, die der Sperrbildschirm zeigt); die Tasten schicken
 // die normalen Medienbefehle an die spielende App (Spotify6 fängt sie in MMApplication ab).
 // Sichtbar nur, wenn Spotify6 die spielende App ist und der Schalter in den Spotify6-Einstellungen an ist.

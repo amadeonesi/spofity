@@ -321,8 +321,8 @@ static MMRootController *gRoot;
 }
 - (void)pushContent:(UIViewController *)vc {
     [_pushedStack addObject:vc]; vc.view.frame=_content.bounds; vc.view.clipsToBounds=YES; [_content addSubview:vc.view];
-    CGRect f=vc.view.frame; vc.view.frame=CGRectOffset(f,0,f.size.height);
-    [UIView animateWithDuration:0.25 animations:^{ vc.view.frame=f; }];   // von unten reinschieben
+    CGRect f=vc.view.frame; vc.view.frame=CGRectOffset(f,f.size.width,0);
+    [UIView animateWithDuration:0.3 animations:^{ vc.view.frame=f; }];   // von rechts reinschieben wie bei iOS
     // untere Leisten immer oben halten, damit sie nie von der Playlist verdeckt werden
     [self.view bringSubviewToFront:_dlBar]; [self.view bringSubviewToFront:_npBar]; [self.view bringSubviewToFront:_tabBar];
     [self keepOverlaysOnTop];
@@ -334,7 +334,7 @@ static MMRootController *gRoot;
 }
 - (void)popContent {
     UIViewController*vc=[_pushedStack lastObject]; if(!vc)return; [_pushedStack removeLastObject];
-    [UIView animateWithDuration:0.2 animations:^{ vc.view.frame=CGRectOffset(vc.view.frame,0,vc.view.frame.size.height); }
+    [UIView animateWithDuration:0.25 animations:^{ vc.view.frame=CGRectOffset(vc.view.frame,vc.view.frame.size.width,0); }
                      completion:^(BOOL x){ [vc.view removeFromSuperview]; }];
 }
 - (void)popContentImmediate { for(UIViewController*vc in _pushedStack) [vc.view removeFromSuperview]; [_pushedStack removeAllObjects]; }
@@ -368,6 +368,7 @@ static MMRootController *gRoot;
     [self performSelector:@selector(hideDownloadBar) withObject:nil afterDelay:2.5];
 }
 - (void)hideDownloadBar { _dlBar.hidden=YES; _dlCompact=NO; }
+- (CGFloat)bottomBarsHeight { return (_npBar.hidden?0:_npH) + (_dlBar.hidden?0:_dlBar.frame.size.height); }
 - (void)dlProgress:(NSNotification *)n { NSInteger t=[n.userInfo[@"total"] integerValue]; if(t>0) [self showDownloadProgress:[n.userInfo[@"done"] integerValue] total:t]; }
 - (void)dlDone:(NSNotification *)n { [self showDownloadMessage:LF(@"✓  %ld tracks saved offline",(long)[n.userInfo[@"ok"] integerValue])]; }
 - (void)dlFull:(NSNotification *)n { [self showDownloadMessage:L(@"Storage full, download stopped")]; }
@@ -441,6 +442,7 @@ static NSArray* shuffledFrom(NSArray*list,NSInteger idx){
     [self prefetchNext]; [self saveState];
 }
 // Aus der Warteschlange nehmen: eingereihter Titel bzw. kommender Titel der Liste (nicht der laufende)
+- (void)clearUserQueue { _userQueue=@[]; [self prefetchNext]; [self saveState]; }
 - (void)removeUserQueueIndex:(NSInteger)i {
     if(i<0 || i>=(NSInteger)_userQueue.count) return;
     NSMutableArray*q=[_userQueue mutableCopy]; [q removeObjectAtIndex:i]; _userQueue=q;

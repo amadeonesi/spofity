@@ -12,6 +12,7 @@
 //   push album|artist <id> [name]   ·   tab <n>   ·   search <text>
 #ifdef DEBUG
 #import <UIKit/UIKit.h>
+#import <QuartzCore/QuartzCore.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
 #import "MMSpotify.h"
@@ -72,6 +73,32 @@ static void shot(void){
 }
 static UIAlertView* findAlert(UIView*v){ if([v isKindOfClass:[UIAlertView class]]) return (UIAlertView*)v; for(UIView*s in v.subviews){ UIAlertView*a=findAlert(s); if(a) return a; } return nil; }
 
+static double gCellSum, gCellMax; static int gCellN;
+// Scroll-Messung: scrollt die Liste wie ein Finger (px pro Frame) und loggt Frame-Zeiten
+@interface MMScrollTest : NSObject { @public UIScrollView*sv; CGFloat step; int left, n, slow; double last, sum, worst; CADisplayLink*dl; }
+@end
+@implementation MMScrollTest
+- (void)tick:(CADisplayLink *)l {
+    if(last>0){ double dt=l.timestamp-last; sum+=dt; n++; if(dt>worst){ worst=dt; MMLog(@"debug: scrolltest slow frame %.0fms at frame %d y=%.0f rows=%ld", dt*1000, n, sv.contentOffset.y, (long)[(UITableView*)sv numberOfRowsInSection:0]); } if(dt>0.020) slow++; }
+    last=l.timestamp;
+    CGFloat maxY=MAX(0,sv.contentSize.height-sv.bounds.size.height), y=sv.contentOffset.y+step;
+    if(y>maxY||y<0){ step=-step; y=MIN(MAX(y,0),maxY); }
+    sv.contentOffset=CGPointMake(0,y);
+    if(--left<=0){ [dl invalidate]; dl=nil;
+        MMLog(@"debug: scrolltest frames=%d avg=%.1fms fps=%.1f worst=%.0fms slow(>20ms)=%d cells=%d cellAvg=%.1fms cellMax=%.0fms cellTotal=%.0fms", n, sum/n*1000, n/sum, worst*1000, slow, gCellN, gCellN?gCellSum/gCellN*1000:0, gCellMax*1000, gCellSum*1000); }
+}
+@end
+static MMScrollTest*gScroll;
+// Zeit in cellForRow messen (beliebiger Controller): Originalmethode umhüllen
+static void timeCells(Class cls){
+    static NSMutableSet*done; if(!done) done=[NSMutableSet set]; if([done containsObject:cls]) return; [done addObject:cls];
+    SEL sel=@selector(tableView:cellForRowAtIndexPath:); Method m=class_getInstanceMethod(cls,sel); if(!m) return;
+    IMP orig=method_getImplementation(m);
+    method_setImplementation(m, imp_implementationWithBlock(^id(id me, UITableView*tv, NSIndexPath*ip){
+        CFAbsoluteTime t0=CFAbsoluteTimeGetCurrent(); id c=((id(*)(id,SEL,UITableView*,NSIndexPath*))orig)(me,sel,tv,ip);
+        double dt=CFAbsoluteTimeGetCurrent()-t0; gCellSum+=dt; gCellN++; if(dt>gCellMax) gCellMax=dt; return c; }));
+}
+
 static void run(NSString*line){
     NSArray*w=[line componentsSeparatedByString:@" "]; NSString*c=w[0]; MMRootController*root=[MMRootController shared];
     NSString*rest=w.count>1?[[w subarrayWithRange:NSMakeRange(1,w.count-1)] componentsJoinedByString:@" "]:@"";
@@ -98,6 +125,19 @@ static void run(NSString*line){
         [root performSelector:@selector(saveState)]; }
     else if([c isEqualToString:@"move"] && w.count>=3) [root moveQueueFrom:[w[1] integerValue] to:[w[2] integerValue]];
     else if([c isEqualToString:@"closesheet"]){ for(UIView*v in root.view.subviews) if(v.tag==MMSheetTag && [v respondsToSelector:@selector(tapOutside)]) [v performSelector:@selector(tapOutside)]; }
+    else if([c isEqualToString:@"probe"]){   // probe <ms>: wo die oberste geöffnete Ansicht gerade ist (mitten in der Animation)
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)([rest doubleValue]*NSEC_PER_MSEC)),dispatch_get_main_queue(),^{
+            UIViewController*vc=[[root valueForKey:@"_pushedStack"] lastObject];
+            MMLog(@"debug: probe %@ frame=%@ live=%@", NSStringFromClass([vc class]), NSStringFromCGRect(vc.view.frame), NSStringFromCGRect([(CALayer*)vc.view.layer.presentationLayer frame])); }); }
+    else if([c isEqualToString:@"lastrow"]){   // lastrow: wie mit dem Finger ganz nach unten (mit contentInset)
+        UIViewController*vc=[[root valueForKey:@"_pushedStack"] lastObject]?:[root valueForKey:@"_vcs"][[[root valueForKey:@"_sel"] integerValue]];
+        UITableView*tv=[vc valueForKey:@"_table"]; NSInteger sc=tv.numberOfSections-1; while(sc>0 && ![tv numberOfRowsInSection:sc]) sc--;
+        CGFloat y=MAX(0,tv.contentSize.height+tv.contentInset.bottom-tv.bounds.size.height); [tv setContentOffset:CGPointMake(0,y) animated:NO];
+        MMLog(@"debug: lastrow frame=%@ content=%.0f y=%.0f super=%@",NSStringFromCGRect(tv.frame),tv.contentSize.height,y,NSStringFromCGRect(tv.superview.bounds)); }
+    else if([c isEqualToString:@"field"]){   // field: Suchfeld antippen (Tastatur auf)
+        UIViewController*vc=[root valueForKey:@"_vcs"][[[root valueForKey:@"_sel"] integerValue]]; [[vc valueForKey:@"_field"] becomeFirstResponder]; }
+    else if([c isEqualToString:@"kb"]){ UIViewController*vc=[root valueForKey:@"_vcs"][[[root valueForKey:@"_sel"] integerValue]];
+        MMLog(@"debug: keyboard %@", [[vc valueForKey:@"_field"] isFirstResponder]?@"open":@"closed"); }
     else if([c isEqualToString:@"timesnap"]){   // wie lange das Bild der App beim Runterziehen des Players dauert
         UIView*app=root.view; double t0=CACurrentMediaTime();
         UIGraphicsBeginImageContextWithOptions(app.bounds.size,YES,0); [app.layer renderInContext:UIGraphicsGetCurrentContext()]; UIGraphicsEndImageContext();
@@ -120,6 +160,11 @@ static void run(NSString*line){
         MMLog(@"debug: fakeswipe real=%@", real?@"ja":@"nein");
         [MMSongMenu performSelector:NSSelectorFromString(@"debugSwipe:real:") withObject:gFake withObject:real];
     }
+    else if([c isEqualToString:@"scrolltest"]){   // scrolltest <px pro Frame> <Frames>
+        UIViewController*vc=[[root valueForKey:@"_pushedStack"] lastObject]?:[root valueForKey:@"_vcs"][[[root valueForKey:@"_sel"] integerValue]];
+        timeCells([vc class]); gCellSum=gCellMax=0; gCellN=0;
+        gScroll=[MMScrollTest new]; gScroll->sv=[vc valueForKey:@"_table"]; gScroll->step=w.count>1?[w[1] floatValue]:12; gScroll->left=w.count>2?[w[2] intValue]:240;
+        gScroll->dl=[CADisplayLink displayLinkWithTarget:gScroll selector:@selector(tick:)]; [gScroll->dl addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes]; }
     else if([c isEqualToString:@"scroll"]){   // scroll <y>: Liste im aktuellen Tab bzw. der obersten geöffneten Ansicht
         UIViewController*vc=[[root valueForKey:@"_pushedStack"] lastObject]?:[root valueForKey:@"_vcs"][[[root valueForKey:@"_sel"] integerValue]];
         UIScrollView*sv=nil; @try{ sv=[vc valueForKey:@"_table"]; }@catch(NSException*e){ sv=[vc valueForKey:@"_sc"]; }
@@ -147,7 +192,9 @@ static void run(NSString*line){
     else if([c isEqualToString:@"search"]) [[NSNotificationCenter defaultCenter] postNotificationName:@"MMDebugSearch" object:rest];
     else if([c isEqualToString:@"call"] && w.count>=3){
         if([w[1] isEqualToString:@"alert"]){ UIAlertView*a=nil; for(UIWindow*x in [UIApplication sharedApplication].windows){ a=findAlert(x); if(a) break; }
-            [a dismissWithClickedButtonIndex:[w[2] integerValue] animated:NO]; MMLog(@"debug: alert %@",a?@"geklickt":@"nicht gefunden"); return; }
+            NSInteger bi=[w[2] integerValue];   // wie ein echter Tipp: erst der Delegate, dann zu
+            if([a.delegate respondsToSelector:@selector(alertView:clickedButtonAtIndex:)]) [a.delegate alertView:a clickedButtonAtIndex:bi];
+            [a dismissWithClickedButtonIndex:bi animated:NO]; MMLog(@"debug: alert %@",a?@"geklickt":@"nicht gefunden"); return; }
         id t=nil;
         if([w[1] isEqualToString:@"root"]) t=root;
         else if([w[1] isEqualToString:@"pushed"]) t=[[root valueForKey:@"_pushedStack"] lastObject];

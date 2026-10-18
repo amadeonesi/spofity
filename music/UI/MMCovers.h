@@ -6,6 +6,7 @@
 + (UIImage *)cached:(NSString *)url;                              // sofort aus RAM, sonst nil
 + (void)load:(NSString *)url into:(UIImageView *)iv;             // RAM->Platte->Netz, setzt Bild auf Main
 + (void)load:(NSString *)url completion:(void(^)(UIImage *img))done;
++ (void)thumb:(NSString *)url size:(CGFloat)pt radius:(CGFloat)r into:(UIImageView *)iv;   // verkleinert + dekodiert im Hintergrund (für lange Listen)
 + (void)prefetch:(NSString *)url;
 // Lieblingssongs: Spotifys eigenes Bild; bis es geladen ist (oder offline) lila Fläche mit Herz. Reuse-sicher.
 + (void)likedCoverInto:(UIImageView *)iv;

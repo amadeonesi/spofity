@@ -53,7 +53,9 @@
     // --- Offline-Knopf oben rechts (gegenüber von Zurück); fragt vor dem Speichern und vor dem Entfernen nach ---
     _grn=[UIColor colorWithRed:0.11 green:0.73 blue:0.33 alpha:1];
     _offBtn=[UIButton buttonWithType:UIButtonTypeCustom]; _offBtn.frame=CGRectMake(W-52,8,44,34);
-    _offBtn.hidden=YES; [_offBtn addTarget:self action:@selector(toggleDownload) forControlEvents:UIControlEventTouchUpInside]; [self.view addSubview:_offBtn];
+    _offBtn.hidden=YES; [self.view addSubview:_offBtn];
+    if([self isDownloads]){ [_offBtn setImage:shuffleIcon() forState:UIControlStateNormal]; [_offBtn addTarget:self action:@selector(shufflePlay) forControlEvents:UIControlEventTouchUpInside]; }   // "Heruntergeladen": Zufallswiedergabe statt Download
+    else [_offBtn addTarget:self action:@selector(toggleDownload) forControlEvents:UIControlEventTouchUpInside];
     _offSpin=[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleWhite];
     _offSpin.center=_offBtn.center; _offSpin.hidesWhenStopped=YES; [self.view addSubview:_offSpin];
 
@@ -126,6 +128,7 @@ static NSString* fmtDuration(long long ms){
     _hInfo.text=(!cnt || (!album && [one sizeWithFont:_hInfo.font].width<=_hInfo.bounds.size.width))?one:[NSString stringWithFormat:@"%@\n%@",kind,cnt];
     [self layoutHeader];
     if(liked){ [MMCovers likedCoverInto:_hCover]; return; }
+    if([self isDownloads]){ for(UIView*v in _hCover.subviews)[v removeFromSuperview]; _hCover.image=[SpotTheme downloadsCover:_hCover.bounds.size.width]; return; }
     NSString*cu=[MMCovers bestURL:_meta[@"images"]]; if(!cu.length && _tracks.count && album) cu=_tracks[0][@"cover"];
     if(cu.length){ for(UIView*v in _hCover.subviews)[v removeFromSuperview]; [MMCovers load:cu into:_hCover]; }
     // Playlist ohne eigenes Bild: Mosaik wie in der Bibliothek. Erst wenn die Kopf-Daten da sind (sonst gewann beim ersten
@@ -235,17 +238,36 @@ static NSString* fmtDuration(long long ms){
     if(b>=1024LL*1024*1024) return [NSString stringWithFormat:@"%.1f GB",b/1073741824.0];
     return [NSString stringWithFormat:@"%.0f MB",b/1048576.0];
 }
+// Zufallswiedergabe: zwei gekreuzte Pfeile (wie im Player), grün
+static UIImage* shuffleIcon(void){
+    CGFloat B=26, sz=20, o=3; UIGraphicsBeginImageContextWithOptions(CGSizeMake(B,B),NO,0); [[SpotTheme green] setStroke];
+    UIBezierPath*p=[UIBezierPath bezierPath]; p.lineWidth=2; p.lineCapStyle=kCGLineCapRound; p.lineJoinStyle=kCGLineJoinRound;
+    #define P(x,y) CGPointMake(o+sz*(x),o+sz*(y))
+    [p moveToPoint:P(0.05,0.25)]; [p addCurveToPoint:P(0.9,0.75) controlPoint1:P(0.5,0.25) controlPoint2:P(0.45,0.75)];
+    [p moveToPoint:P(0.05,0.75)]; [p addCurveToPoint:P(0.9,0.25) controlPoint1:P(0.5,0.75) controlPoint2:P(0.45,0.25)];
+    [p moveToPoint:P(0.74,0.1)];  [p addLineToPoint:P(0.92,0.25)]; [p addLineToPoint:P(0.74,0.4)];
+    [p moveToPoint:P(0.74,0.6)];  [p addLineToPoint:P(0.92,0.75)]; [p addLineToPoint:P(0.74,0.9)];
+    #undef P
+    [p stroke]; UIImage*img=UIGraphicsGetImageFromCurrentImageContext(); UIGraphicsEndImageContext(); return img;
+}
 // Knopf-Symbol: Kreis mit Pfeil nach unten (noch nicht offline) bzw. grüner Kreis mit Haken (offline)
 static UIImage* offIcon(BOOL have, UIColor*grn){
+    if(have) return [SpotTheme downloadedIcon:26];   // gleiches Zeichen wie in den Zeilen
     UIGraphicsBeginImageContextWithOptions(CGSizeMake(26,26),NO,0);
     UIBezierPath*p=[UIBezierPath bezierPath]; p.lineWidth=2; p.lineCapStyle=kCGLineCapRound; p.lineJoinStyle=kCGLineJoinRound;
-    if(have){ [grn setFill]; [[UIBezierPath bezierPathWithOvalInRect:CGRectMake(1,1,24,24)] fill]; [[UIColor blackColor] setStroke];
-        [p moveToPoint:CGPointMake(7.5,13.5)]; [p addLineToPoint:CGPointMake(11.5,17.5)]; [p addLineToPoint:CGPointMake(18.5,9)]; [p stroke]; }
-    else { [[SpotTheme ink] setStroke]; UIBezierPath*c=[UIBezierPath bezierPathWithOvalInRect:CGRectMake(2,2,22,22)]; c.lineWidth=1.5; [c stroke];
+    { [[SpotTheme ink] setStroke]; UIBezierPath*c=[UIBezierPath bezierPathWithOvalInRect:CGRectMake(2,2,22,22)]; c.lineWidth=1.5; [c stroke];
         [p moveToPoint:CGPointMake(13,7.5)]; [p addLineToPoint:CGPointMake(13,18)]; [p moveToPoint:CGPointMake(8.5,13.5)]; [p addLineToPoint:CGPointMake(13,18)]; [p addLineToPoint:CGPointMake(17.5,13.5)]; [p stroke]; }
     UIImage*img=UIGraphicsGetImageFromCurrentImageContext(); UIGraphicsEndImageContext(); return img;
 }
+- (BOOL)isDownloads { return [_path hasPrefix:@"me/downloads"]; }
+// Zufallswiedergabe der heruntergeladenen Songs: zufälliger Start, Rest gemischt
+- (void)shufflePlay {
+    if(!_tracks.count) return;
+    MMRootController*r=[MMRootController shared]; [r setShuffle:YES];
+    [r playList:_tracks index:(NSInteger)arc4random_uniform((u_int32_t)_tracks.count) context:[self context]];
+}
 - (void)updateDlState {
+    if([self isDownloads]){ _offBtn.hidden=!_tracks.count; [_offSpin stopAnimating]; return; }
     if(_dlRunning && [MMSpotify isDownloading]){ _offBtn.hidden=YES; [_offSpin startAnimating]; return; }   // lädt gerade: Kreisel
     _dlRunning=NO;
     [_offSpin stopAnimating];
@@ -317,11 +339,11 @@ enum { kAlertRemove=1, kAlertSave=2 };
         if(cover){ UIImageView*cov=[[UIImageView alloc] initWithFrame:num?CGRectMake(36,11,44,44):CGRectMake(16,9,48,48)]; cov.tag=1; cov.backgroundColor=[SpotTheme card]; cov.layer.cornerRadius=4; cov.clipsToBounds=YES; cov.contentMode=UIViewContentModeScaleAspectFill; [c.contentView addSubview:cov]; }
         UILabel*ti=[[UILabel alloc] initWithFrame:CGRectMake(tx,14,W-tx-40,20)]; ti.tag=2; ti.font=[UIFont boldSystemFontOfSize:15]; ti.textColor=[SpotTheme ink]; [c.contentView addSubview:ti];
         UILabel*ar=[[UILabel alloc] initWithFrame:CGRectMake(tx,36,W-tx-40,18)]; ar.tag=3; ar.font=[SpotTheme sub]; ar.textColor=[SpotTheme muted]; [c.contentView addSubview:ar];
-        UILabel*dl=[[UILabel alloc] initWithFrame:CGRectMake(W-34,0,26,66)]; dl.tag=4; dl.font=[UIFont boldSystemFontOfSize:15]; dl.textColor=_grn; dl.textAlignment=NSTextAlignmentCenter; dl.autoresizingMask=UIViewAutoresizingFlexibleLeftMargin; [c.contentView addSubview:dl]; }
+        UIImageView*dl=[[UIImageView alloc] initWithFrame:CGRectMake(W-32,24,18,18)]; dl.tag=4; dl.contentMode=UIViewContentModeCenter; dl.autoresizingMask=UIViewAutoresizingFlexibleLeftMargin; [c.contentView addSubview:dl]; }
     NSDictionary*t=_tracks[ip.row];
     ((UILabel*)[c.contentView viewWithTag:2]).text=t[@"title"];
     ((UILabel*)[c.contentView viewWithTag:3]).text=t[@"artist"];
-    ((UILabel*)[c.contentView viewWithTag:4]).text=[MMSpotify isDownloaded:t[@"id"]]?@"✓":@"";
+    ((UIImageView*)[c.contentView viewWithTag:4]).image=[MMSpotify isDownloaded:t[@"id"]]?[SpotTheme downloadedIcon:18]:nil;
     if(_coverStyle) ((UILabel*)[c.contentView viewWithTag:5]).text=[NSString stringWithFormat:@"%ld",(long)ip.row+1];
     UIImageView*cov=(UIImageView*)[c.contentView viewWithTag:1];
     if(cov){ cov.image=nil; [MMCovers load:t[@"cover"] into:cov]; }   // gemeinsamer RAM+Platte-Cache (reuse-sicher)
@@ -335,6 +357,7 @@ enum { kAlertRemove=1, kAlertSave=2 };
 - (NSDictionary *)context {
     NSString*id_=[[[_path componentsSeparatedByString:@"?"][0] componentsSeparatedByString:@"/"] lastObject];
     if([_path hasPrefix:@"me/tracks"]) return @{@"type":@"liked"};
+    if([self isDownloads]) return @{@"type":@"downloads",@"name":L(@"Downloaded")};
     if([_path hasPrefix:@"playlists/"]){ NSString*cu=[MMCovers bestURL:_meta[@"images"]];   // echtes Playlist-Cover (sonst zeigte die Startseite keins)
         return @{@"type":@"playlist",@"id":id_,@"name":[_meta[@"name"] length]?_meta[@"name"]:(_title?:@""),@"images":cu.length?@[@{@"url":cu}]:@[]}; }
     if([_path hasPrefix:@"albums/"]){ NSString*cu=_tracks.count?_tracks[0][@"cover"]:nil;

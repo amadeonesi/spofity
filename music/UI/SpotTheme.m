@@ -43,4 +43,27 @@ static UIColor* rgb(int r,int g,int b){ return [UIColor colorWithRed:r/255.0 gre
     b.titleLabel.font=[UIFont systemFontOfSize:15]; b.titleEdgeInsets=UIEdgeInsetsMake(0,6,0,0);
     b.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeft;
 }
++ (UIImage *)downloadedIcon:(CGFloat)d {
+    static NSMutableDictionary*memo; if(!memo) memo=[NSMutableDictionary dictionary];
+    UIImage*m=memo[@(d)]; if(m) return m;
+    CGFloat k=d/26.0;   // gezeichnet im 26er-Raster wie der Knopf oben rechts
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(d,d),NO,0);
+    [[self green] setFill]; [[UIBezierPath bezierPathWithOvalInRect:CGRectMake(1*k,1*k,24*k,24*k)] fill];
+    UIBezierPath*p=[UIBezierPath bezierPath]; p.lineWidth=MAX(1.5,2*k); p.lineCapStyle=kCGLineCapRound; p.lineJoinStyle=kCGLineJoinRound;
+    [[UIColor blackColor] setStroke];
+    [p moveToPoint:CGPointMake(7.5*k,13.5*k)]; [p addLineToPoint:CGPointMake(11.5*k,17.5*k)]; [p addLineToPoint:CGPointMake(18.5*k,9*k)]; [p stroke];
+    m=UIGraphicsGetImageFromCurrentImageContext(); UIGraphicsEndImageContext(); memo[@(d)]=m; return m;
+}
++ (UIImage *)downloadsCover:(CGFloat)S {
+    static NSMutableDictionary*memo; if(!memo) memo=[NSMutableDictionary dictionary];
+    UIImage*m=memo[@(S)]; if(m) return m;
+    CGFloat k=S/48.0; UIGraphicsBeginImageContextWithOptions(CGSizeMake(S,S),YES,0); CGContextRef cx=UIGraphicsGetCurrentContext();
+    CGColorSpaceRef cs=CGColorSpaceCreateDeviceRGB(); CGFloat comps[]={0.16,0.80,0.42,1, 0.04,0.36,0.20,1};
+    CGGradientRef g=CGGradientCreateWithColorComponents(cs,comps,NULL,2); CGContextDrawLinearGradient(cx,g,CGPointMake(0,0),CGPointMake(S,S),0);
+    CGGradientRelease(g); CGColorSpaceRelease(cs);
+    [[UIColor whiteColor] setStroke]; UIBezierPath*p=[UIBezierPath bezierPath]; p.lineWidth=3*k; p.lineCapStyle=kCGLineCapRound; p.lineJoinStyle=kCGLineJoinRound;
+    [p moveToPoint:CGPointMake(24*k,13*k)]; [p addLineToPoint:CGPointMake(24*k,32*k)]; [p moveToPoint:CGPointMake(16*k,25*k)]; [p addLineToPoint:CGPointMake(24*k,33*k)]; [p addLineToPoint:CGPointMake(32*k,25*k)];
+    [p moveToPoint:CGPointMake(15*k,37*k)]; [p addLineToPoint:CGPointMake(33*k,37*k)]; [p stroke];
+    m=UIGraphicsGetImageFromCurrentImageContext(); UIGraphicsEndImageContext(); memo[@(S)]=m; return m;
+}
 @end

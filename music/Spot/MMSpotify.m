@@ -7,6 +7,8 @@
 #import <netinet/in.h>
 #import <netdb.h>
 #import <unistd.h>
+#import <sys/stat.h>
+#import <sys/time.h>
 #import <string.h>
 #import <arpa/inet.h>
 #import <SystemConfiguration/SystemConfiguration.h>
@@ -393,6 +395,50 @@ static NSString* diskDir(void){ NSString*d=MMPath(@".spotcache"); [[NSFileManage
 static NSString* diskPath(NSString*tid){ return [NSString stringWithFormat:@"%@/%@.ogg", diskDir(), tid]; }
 static BOOL diskHas(NSString*tid){ return tid.length && [[NSFileManager defaultManager] fileExistsAtPath:diskPath(tid)]; }
 
+// ---- Song-Cache für gestreamte Titel ----
+// Gestreamte Songs bleiben entschlüsselt in .spotcache/stream liegen: nochmal Abspielen braucht kein Netz.
+// Höchstens 500 MB und nie so viel, dass weniger als 1 GB frei bleibt; der am längsten nicht gespielte fliegt zuerst.
+// Offline-Downloads haben Vorrang: ein Song aus dem Cache wird dorthin verschoben, und bei voller Platte wird der Cache geleert.
+#define STREAM_MAX   (500LL*1024*1024)
+#define STREAM_FLOOR (1024LL*1024*1024)
+static NSString* streamDir(void){ NSString*d=MMPath(@".spotcache/stream"); [[NSFileManager defaultManager] createDirectoryAtPath:d withIntermediateDirectories:YES attributes:nil error:NULL]; return d; }
+static NSString* streamPath(NSString*tid){ return [NSString stringWithFormat:@"%@/%@.ogg", streamDir(), tid]; }
+static BOOL streamHas(NSString*tid){ return tid.length && [[NSFileManager defaultManager] fileExistsAtPath:streamPath(tid)]; }
+static dispatch_queue_t streamQ(void){ static dispatch_queue_t q; static dispatch_once_t o; dispatch_once(&o,^{ q=dispatch_queue_create("spotify6.streamcache",DISPATCH_QUEUE_SERIAL);
+    dispatch_set_target_queue(q,dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND,0)); }); return q; }
+// Älteste löschen, bis höchstens `max` Bytes belegt sind und STREAM_FLOOR frei bleibt. Nur auf streamQ.
+static long long streamTrim(long long max, NSString*keep){
+    NSString*dir=streamDir(); NSMutableArray*files=[NSMutableArray array]; long long total=0;
+    for(NSString*f in [[NSFileManager defaultManager] contentsOfDirectoryAtPath:dir error:NULL]){
+        if(![f hasSuffix:@".ogg"]) continue;
+        struct stat st; NSString*p=[dir stringByAppendingPathComponent:f];
+        if(stat(p.fileSystemRepresentation,&st)!=0) continue;
+        total+=st.st_size; [files addObject:@[p,@(st.st_size),@(st.st_mtime)]];
+    }
+    [files sortUsingComparator:^NSComparisonResult(NSArray*a,NSArray*b){ return [a[2] compare:b[2]]; }];   // ältester zuerst
+    long long freeB=[MMSpotify freeDiskBytes];
+    for(NSArray*e in files){
+        if(total<=max && freeB>=STREAM_FLOOR) break;
+        if(keep && [[e[0] lastPathComponent] isEqualToString:[keep stringByAppendingString:@".ogg"]]) continue;
+        if(unlink([e[0] fileSystemRepresentation])==0){ total-=[e[1] longLongValue]; freeB+=[e[1] longLongValue]; }
+    }
+    return total;
+}
+static void streamStore(NSString*tid, NSData*d){
+    if(!tid.length || !d.length) return;
+    dispatch_async(streamQ(), ^{ @autoreleasepool {
+        if(diskHas(tid) || streamHas(tid)) return;   // Offline-Song oder schon im Cache
+        if([MMSpotify freeDiskBytes]-(long long)d.length < STREAM_FLOOR){ streamTrim(STREAM_MAX,nil); if([MMSpotify freeDiskBytes]-(long long)d.length < STREAM_FLOOR) return; }
+        if([d writeToFile:streamPath(tid) atomically:YES]) streamTrim(STREAM_MAX,tid);
+    }});
+}
+static NSData* streamLoad(NSString*tid){
+    if(!streamHas(tid)) return nil;
+    NSString*p=streamPath(tid); NSData*d=[NSData dataWithContentsOfFile:p];
+    if(d.length) utimes(p.fileSystemRepresentation,NULL);   // Änderungszeit = zuletzt gespielt
+    return d;
+}
+
 // Volle Audio-Kette: Datei + AudioKey + CDN(voll) + Entschlüsseln -> entschlüsseltes Ogg (nil bei Fehler).
 // Läuft IMMER auf spotQ (Socket ist single-threaded).
 // Nur der SOCKET-Teil (Metadaten + AudioKey + CDN-Adresse). MUSS auf spotQ laufen (ein Socket).
@@ -469,8 +515,9 @@ static BOOL diskHas(NSString*tid){ return tid.length && [[NSFileManager defaultM
     if(cacheGet(trackId) || diskHas(trackId)) return;   // schon im RAM oder heruntergeladen
     @synchronized(gCache){ cacheInit(); if([gInflight containsObject:trackId]) return; [gInflight addObject:trackId]; }
     dispatch_async(spotQ(), ^{
-        if(!cacheGet(trackId)){ NSString*e=nil; NSData*d=[self loadAudioData:trackId err:&e];
-            if(d.length){ cachePut(trackId,d); slog(@"prefetch bereit: %@", trackId); } else slog(@"prefetch fail: %@ (%@)",trackId,e); }
+        if(!cacheGet(trackId)){ NSString*e=nil; NSData*d=streamLoad(trackId); BOOL hit=d.length>0;
+            if(!hit){ d=[self loadAudioData:trackId err:&e]; if(d.length) streamStore(trackId,d); }
+            if(d.length){ cachePut(trackId,d); slog(@"prefetch bereit: %@%@", trackId, hit?@" (Song-Cache)":@""); } else slog(@"prefetch fail: %@ (%@)",trackId,e); }
         @synchronized(gCache){ [gInflight removeObject:trackId]; }
     });
 }
@@ -487,6 +534,7 @@ static BOOL diskHas(NSString*tid){ return tid.length && [[NSFileManager defaultM
 // Pro Track: kurzer Socket-Teil (resolve) auf spotQ, großer Download auf dlDataQ -> Playback bleibt frei.
 // Status geht per Notification raus: MMDownloadProgress {done,total}, MMDownloadDone {ok}, MMDownloadFull.
 static NSMutableArray *gDlQueue=nil; static BOOL gDlRunning=NO; static NSInteger gDlDone=0, gDlTotal=0; static NSInteger gDlFails=0;
+static double gDlLastT=0, gDlAvg=0;   // Zeit pro Titel (gleitender Mittelwert) für "noch etwa … Min."
 static NSMutableSet *gDlSeen=nil;  // bereits in gDlTotal gezählte Track-IDs (gegen Doppelzählung über mehrere queue-Aufrufe)
 // Background-Task: gibt dem Download beim Verlassen der App Gnadenfrist (auch ohne Musikwiedergabe)
 static UIBackgroundTaskIdentifier gDlBg=(UIBackgroundTaskIdentifier)NSUIntegerMax;  // ==UIBackgroundTaskInvalid, aber als Compile-Time-Konstante
@@ -494,6 +542,49 @@ static void dlBgBegin(void){ dispatch_async(dispatch_get_main_queue(), ^{ if(gDl
 static void dlBgEnd(void){ dispatch_async(dispatch_get_main_queue(), ^{ if(gDlBg!=UIBackgroundTaskInvalid){ [[UIApplication sharedApplication] endBackgroundTask:gDlBg]; gDlBg=UIBackgroundTaskInvalid; } }); }
 static dispatch_queue_t dlDataQ(void){ static dispatch_queue_t q; static dispatch_once_t o; dispatch_once(&o,^{ q=dispatch_queue_create("mesh.dl.data",DISPATCH_QUEUE_SERIAL); }); return q; }
 
+static NSString *offlinePath(void); static NSArray* spTracks(NSArray*ids);   // weiter unten definiert
++ (NSDictionary *)downloadStatus {
+    @synchronized([MMSpotify class]){
+        NSArray*q=gDlQueue?[gDlQueue copy]:@[]; NSInteger left=(NSInteger)q.count;
+        return @{@"queue":q,@"done":@(gDlDone),@"total":@(gDlTotal),@"eta":@(gDlAvg>0?gDlAvg*left:-1)};
+    }
+}
++ (NSArray *)downloadedTracks {
+    NSMutableArray*out=[NSMutableArray array]; NSString*dir=diskDir();
+    for(NSString*f in [[NSFileManager defaultManager] contentsOfDirectoryAtPath:dir error:NULL]){
+        if(![f hasSuffix:@".ogg"]) continue;
+        struct stat st; if(stat([dir stringByAppendingPathComponent:f].fileSystemRepresentation,&st)!=0) continue;
+        [out addObject:@{@"id":[f stringByDeletingPathExtension],@"bytes":@(st.st_size),@"date":@(st.st_mtime)}];
+    }
+    [out sortUsingComparator:^NSComparisonResult(NSDictionary*a,NSDictionary*b){ return [b[@"date"] compare:a[@"date"]]; }];   // neueste zuerst
+    return out;
+}
++ (void)deleteDownload:(NSString *)tid {
+    if(!tid.length) return;
+    [[NSFileManager defaultManager] removeItemAtPath:diskPath(tid) error:NULL];
+    @synchronized([MMSpotify class]){   // auch aus den gemerkten Offline-Listen, sonst lädt der Auto-Resume ihn wieder
+        NSMutableArray*arr=[NSMutableArray array];
+        for(NSDictionary*e in [NSArray arrayWithContentsOfFile:offlinePath()]){
+            if(![e isKindOfClass:[NSDictionary class]]) continue;
+            NSMutableArray*ids=[e[@"ids"] mutableCopy]; [ids removeObject:tid];
+            if(ids.count){ NSMutableDictionary*m=[e mutableCopy]; m[@"ids"]=ids; [arr addObject:m]; }
+        }
+        [arr writeToFile:offlinePath() atomically:YES];
+    }
+    dispatch_async(dispatch_get_main_queue(), ^{ [[NSNotificationCenter defaultCenter] postNotificationName:@"MMDownloadsChanged" object:nil]; });
+}
++ (void)trackInfos:(NSArray *)ids completion:(void(^)(NSDictionary *byId))done {
+    dispatch_async(spotQ(), ^{
+        NSMutableDictionary*by=[NSMutableDictionary dictionary];
+        for(NSUInteger i=0;i<ids.count;i+=50){
+            for(NSDictionary*t in spTracks([ids subarrayWithRange:NSMakeRange(i,MIN(50,ids.count-i))])){
+                NSArray*ar=t[@"artists"]; NSArray*im=t[@"album"][@"images"];
+                by[t[@"id"]]=@{@"title":t[@"name"]?:@"",@"artist":ar.count?(ar[0][@"name"]?:@""):@"",@"cover":im.count?(im[0][@"url"]?:@""):@""};
+            }
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{ done(by); });
+    });
+}
 + (BOOL)isDownloading { @synchronized([MMSpotify class]){ return gDlRunning; } }
 + (void)postDlProgress {
     NSInteger d,t; @synchronized([MMSpotify class]){ d=gDlDone; t=gDlTotal; }
@@ -512,13 +603,16 @@ static dispatch_queue_t dlDataQ(void){ static dispatch_queue_t q; static dispatc
             if(diskHas(tid)){ gDlDone++; }                // schon offline -> auch in den Zähler (Balken bleibt, springt nicht auf 0)
             else [gDlQueue addObject:tid];                // fehlt -> zum Herunterladen einreihen
         }
-        if(!gDlRunning){ gDlRunning=YES; start=YES; }
+        if(!gDlRunning){ gDlRunning=YES; start=YES; gDlLastT=CFAbsoluteTimeGetCurrent(); }
     }
     [self postDlProgress];
     if(start){ dlBgBegin(); [self dlStep]; }
 }
 + (void)dlFinishTrack:(NSString *)tid {
-    @synchronized([MMSpotify class]){ if(gDlQueue.count && [gDlQueue[0] isEqualToString:tid]) [gDlQueue removeObjectAtIndex:0]; gDlDone++; }
+    @synchronized([MMSpotify class]){
+        double now=CFAbsoluteTimeGetCurrent(), dt=now-gDlLastT; gDlLastT=now;
+        if(dt>1 && dt<600) gDlAvg=gDlAvg>0?0.7*gDlAvg+0.3*dt:dt;   // sofort fertige (schon da) zählen nicht
+        if(gDlQueue.count && [gDlQueue[0] isEqualToString:tid]) [gDlQueue removeObjectAtIndex:0]; gDlDone++; }
     [self postDlProgress];
     // kleine Pause zwischen Tracks -> senkt Dauer-Stromzug/Wärme (schont schwachen Akku) und lässt Playback durch
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.6*NSEC_PER_SEC)), dispatch_get_global_queue(0,0), ^{ [MMSpotify dlStep]; });
@@ -535,6 +629,10 @@ static dispatch_queue_t dlDataQ(void){ static dispatch_queue_t q; static dispatc
     dispatch_async(spotQ(), ^{   // NUR der kurze Socket-Teil blockiert spotQ
         @autoreleasepool {
             if(diskHas(tid)){ [MMSpotify dlFinishTrack:tid]; return; }
+            __block BOOL moved=NO;   // schon im Song-Cache -> nur verschieben, nicht neu laden
+            dispatch_sync(streamQ(), ^{ moved=streamHas(tid) && rename(streamPath(tid).fileSystemRepresentation, diskPath(tid).fileSystemRepresentation)==0; });
+            if(moved){ slog(@"dl %@ aus dem Song-Cache übernommen",tid); [MMSpotify dlFinishTrack:tid]; return; }
+            if([MMSpotify freeDiskBytes] < 80*1024*1024) dispatch_sync(streamQ(), ^{ streamTrim(0,nil); });   // Song-Cache für Downloads freigeben
             if([MMSpotify freeDiskBytes] < 80*1024*1024){   // Platte voll -> abbrechen
                 @synchronized([MMSpotify class]){ [gDlQueue removeAllObjects]; gDlRunning=NO; gDlDone=0; gDlTotal=0; [gDlSeen removeAllObjects]; }
                 dispatch_async(dispatch_get_main_queue(), ^{ [[NSNotificationCenter defaultCenter] postNotificationName:@"MMDownloadFull" object:nil userInfo:nil]; });
@@ -611,6 +709,8 @@ static NSString *offlinePath(void){ return [diskDir() stringByAppendingPathCompo
     NSNumber*n=a[NSFileSystemFreeSize];
     return n?[n longLongValue]:0;
 }
++ (long long)songCacheBytes { __block long long n=0; dispatch_sync(streamQ(), ^{ n=streamTrim(STREAM_MAX,nil); }); return n; }
++ (void)clearSongCache { dispatch_async(streamQ(), ^{ [[NSFileManager defaultManager] removeItemAtPath:streamDir() error:NULL]; }); }
 + (long long)cacheBytes {
     NSFileManager*fm=[NSFileManager defaultManager];
     NSArray*files=[fm contentsOfDirectoryAtPath:diskDir() error:NULL];
@@ -636,12 +736,18 @@ static NSString *offlinePath(void){ return [diskDir() stringByAppendingPathCompo
     }
     gLoading=YES;
     dispatch_async(dispatch_get_main_queue(), ^{ [MMAudio stop]; });  // alten Track sofort stoppen
-    dispatch_async(spotQ(), ^{
-        NSString*err=nil; NSData*d=[self loadAudioData:trackId err:&err];
-        if(d.length) cachePut(trackId,d);   // gespielten Track auch cachen (zurück = sofort)
-        else slog(@"playTrack fail %@: %@", trackId, err?:@"?");
-        gLoading=NO;
-        dispatch_async(dispatch_get_main_queue(), ^{ if(d.length)[MMAudio playOgg:d]; if(done)done(d.length>0,err); });
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH,0), ^{   // Song-Cache lesen, ohne hinter einem Vorladen auf der spotQ zu warten
+        NSData*sd=streamLoad(trackId);
+        if(sd.length){ cachePut(trackId,sd); gLoading=NO; slog(@"playTrack Song-Cache-Hit %@",trackId);
+            dispatch_async(dispatch_get_main_queue(), ^{ [MMAudio playOgg:sd]; if(done)done(YES,nil); });
+            return; }
+        dispatch_async(spotQ(), ^{
+            NSString*err=nil; NSData*d=[self loadAudioData:trackId err:&err];
+            if(d.length){ cachePut(trackId,d); streamStore(trackId,d); }   // gespielten Track auch cachen (zurück = sofort, später ohne Netz)
+            else slog(@"playTrack fail %@: %@", trackId, err?:@"?");
+            gLoading=NO;
+            dispatch_async(dispatch_get_main_queue(), ^{ if(d.length)[MMAudio playOgg:d]; if(done)done(d.length>0,err); });
+        });
     });
 }
 
@@ -929,10 +1035,47 @@ static NSDictionary* trackPage(NSArray*ids,NSUInteger off,NSUInteger lim,NSUInte
     id next=(off+lim<total)?[NSString stringWithFormat:@"%@offset=%lu",nextBase,(unsigned long)(off+lim)]:[NSNull null];
     return @{@"items":items,@"next":next,@"total":@(total)};
 }
+// "Heruntergeladen": alle Songs auf der Platte als eine Liste, neueste zuerst.
+// Titel/Artist/Cover/Dauer kommen aus dlinfo.plist; was dort fehlt, aus den gespeicherten Listen oder übers Netz.
+// Was einmal bekannt ist, bleibt in dlinfo.plist -> die Liste geht auch offline vollständig.
+static NSDictionary* spDownloads(int*st){
+    NSArray*files=[MMSpotify downloadedTracks];
+    NSString*ip=[diskDir() stringByAppendingPathComponent:@"dlinfo.plist"];
+    NSMutableDictionary*info=[[NSDictionary dictionaryWithContentsOfFile:ip] mutableCopy]?:[NSMutableDictionary dictionary];
+    NSMutableSet*miss=[NSMutableSet set]; for(NSDictionary*f in files) if(!info[f[@"id"]]) [miss addObject:f[@"id"]];
+    BOOL changed=NO;
+    if(miss.count){   // 1. aus den Listen, die die App schon gespeichert hat
+        for(NSString*fn in [[NSFileManager defaultManager] contentsOfDirectoryAtPath:diskDir() error:NULL]){
+            if(![fn hasPrefix:@"list_"] || ![fn hasSuffix:@".plist"]) continue;
+            for(NSDictionary*t in [NSArray arrayWithContentsOfFile:[diskDir() stringByAppendingPathComponent:fn]]){
+                if(![t isKindOfClass:[NSDictionary class]] || ![miss containsObject:t[@"id"]] || ![t[@"title"] length]) continue;
+                info[t[@"id"]]=@{@"title":t[@"title"],@"artist":t[@"artist"]?:@"",@"cover":t[@"cover"]?:@"",@"dur":t[@"dur"]?:@0};
+                [miss removeObject:t[@"id"]]; changed=YES;
+            }
+        }
+    }
+    if(miss.count && [MMSpotify networkReachable]){   // 2. der Rest übers Netz
+        NSArray*ids=[miss allObjects];
+        for(NSUInteger i=0;i<ids.count;i+=50) for(NSDictionary*t in spTracks([ids subarrayWithRange:NSMakeRange(i,MIN(50,ids.count-i))])){
+            NSArray*ar=t[@"artists"], *im=t[@"album"][@"images"];
+            info[t[@"id"]]=@{@"title":t[@"name"]?:@"",@"artist":ar.count?(ar[0][@"name"]?:@""):@"",@"cover":im.count?(im[0][@"url"]?:@""):@"",@"dur":t[@"duration_ms"]?:@0};
+            changed=YES;
+        }
+    }
+    if(changed) [info writeToFile:ip atomically:YES];
+    NSMutableArray*items=[NSMutableArray array];
+    for(NSDictionary*f in files){
+        NSDictionary*i=info[f[@"id"]]; NSString*cov=i[@"cover"];
+        [items addObject:@{@"track":@{@"id":f[@"id"],@"name":[i[@"title"] length]?i[@"title"]:@"…",@"artists":@[@{@"name":i[@"artist"]?:@""}],
+                                      @"album":@{@"images":[cov length]?@[@{@"url":cov}]:@[]},@"duration_ms":i[@"dur"]?:@0}}];
+    }
+    *st=200; return @{@"items":items,@"next":[NSNull null],@"total":@(items.count)};
+}
 // Übersetzt Web-API-GET-Pfade auf spclient. handled=NO -> Pfad unbekannt, normale Web-API nehmen.
 static NSDictionary* spInternalGet(NSString*path,int*st,BOOL*handled){
     *handled=YES; NSDictionary*q=qparams(path);
     NSUInteger off=(NSUInteger)[q[@"offset"] integerValue], lim=q[@"limit"]?(NSUInteger)[q[@"limit"] integerValue]:50;
+    if([path hasPrefix:@"me/downloads"]) return spDownloads(st);
     NSString*user=spUser();
     if([path hasPrefix:@"me/playlists"]){
         NSDictionary*j=spJSON([NSString stringWithFormat:@"/playlist/v2/user/%@/rootlist?decorate=revision,attributes,length,owner&from=%lu&length=%lu",user,(unsigned long)off,(unsigned long)lim],st);
@@ -1113,6 +1256,10 @@ static NSDictionary* spInternalGet(NSString*path,int*st,BOOL*handled){
 
 // Web-API mit Methode (GET/PUT/DELETE/POST) über den User-Daten-Token.
 + (void)apiUser:(NSString *)method path:(NSString *)path body:(NSData *)body completion:(void(^)(NSDictionary *json, NSInteger status))done {
+    // Suche (auch "Durchsuchen" und deren Folgeseiten) nur mit dem eigenen Entwicklerschlüssel:
+    // den Login-Token weist die Web-API dafür fast immer mit 429 (Rate-Limit) ab
+    if([method isEqualToString:@"GET"] && [path hasPrefix:@"search?"]){
+        [self webGet:[path stringByReplacingOccurrencesOfString:@"&market=from_token" withString:@""] completion:done]; return; }
     dispatch_async(dispatch_get_global_queue(0,0), ^{
         if([method isEqualToString:@"GET"]){   // erst interne Server; nur unbekannte Pfade gehen an die Web-API
             int ist=0; BOOL handled=NO; NSDictionary*ij=spInternalGet(path,&ist,&handled);

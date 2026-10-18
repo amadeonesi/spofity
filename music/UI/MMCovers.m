@@ -129,6 +129,39 @@ static dispatch_queue_t gPre(void){ static dispatch_queue_t q; static dispatch_o
         if(img && [objc_getAssociatedObject(iv, @selector(image)) isEqualToString:url]) iv.image=img;
     }];
 }
+// ---- Kleine Vorschaubilder für lange Listen ----
+// Volles Cover (~300px) wird im Hintergrund gelesen, auf Zeilengröße verkleinert, mit runden Ecken
+// vorgezeichnet und fertig dekodiert gemerkt. Der Main-Thread muss beim Scrollen nichts mehr dekodieren,
+// und es passen hunderte davon in den Speicher (48px ~ 9 KB statt ~360 KB).
+static NSCache *gThumbs(void){ static NSCache*c; static dispatch_once_t o; dispatch_once(&o,^{ c=[[NSCache alloc] init]; c.countLimit=400; }); return c; }
++ (void)thumb:(NSString *)url size:(CGFloat)pt radius:(CGFloat)r into:(UIImageView *)iv {
+    if(!iv || !url.length) return;
+    NSString*key=[url stringByAppendingFormat:@"#%g#%g",pt,r];
+    objc_setAssociatedObject(iv, @selector(image), key, OBJC_ASSOCIATION_COPY_NONATOMIC);   // Reuse-Schutz
+    touchCover(url);
+    UIImage*t=[gThumbs() objectForKey:key];
+    if(t){ iv.image=t; return; }
+    dispatch_async(gQ(), ^{ @autoreleasepool {
+        UIImage*full=[gRam() objectForKey:url];
+        if(!full){
+            NSString*dp=diskPath(url); NSData*d=[NSData dataWithContentsOfFile:dp];
+            if(d.length) full=[UIImage imageWithData:d];
+            if(!full){ d=[NSData dataWithContentsOfURL:[NSURL URLWithString:url]]; if(d.length){ full=[UIImage imageWithData:d]; if(full) storeDeduped(d,dp); } }
+        }
+        UIImage*th=nil;
+        if(full.size.width>0 && full.size.height>0){
+            CGFloat k=MAX(pt/full.size.width,pt/full.size.height), w=full.size.width*k, h=full.size.height*k;   // wie AspectFill
+            UIGraphicsBeginImageContextWithOptions(CGSizeMake(pt,pt),NO,0);
+            if(r>0) [[UIBezierPath bezierPathWithRoundedRect:CGRectMake(0,0,pt,pt) cornerRadius:r] addClip];
+            [full drawInRect:CGRectMake((pt-w)/2,(pt-h)/2,w,h)];
+            th=UIGraphicsGetImageFromCurrentImageContext(); UIGraphicsEndImageContext();
+            if(th) [gThumbs() setObject:th forKey:key];
+        }
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if(th && [objc_getAssociatedObject(iv, @selector(image)) isEqualToString:key]) iv.image=th;
+        });
+    }});
+}
 // ---- Mosaik für Playlists ohne eigenes Bild ----
 static NSString *mosaicMemo(void){ return MMPath(@".spotcache/plcovers.plist"); }
 + (void)playlistCover:(NSString *)pid completion:(void(^)(NSString *))done {

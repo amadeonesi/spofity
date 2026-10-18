@@ -3,6 +3,11 @@
 #import "MMRootController.h"
 #import "MMTrackListController.h"
 #import "MeshL10n.h"
+#import "MMSpotify.h"
+#import "MMKeySetupController.h"
+
+@interface MMBrowseController () <UIAlertViewDelegate>
+@end
 
 @implementation MMBrowseController {
     UIScrollView *_sc; CGFloat _W; NSArray *_cats;
@@ -60,9 +65,18 @@
 
 - (void)open:(UIButton *)b {
     if(b.tag>=(int)_cats.count) return;
+    if(![MMSpotify hasSearchKey]){   // Durchsuchen = Suche: braucht den eigenen Entwicklerschlüssel
+        UIAlertView*a=[[UIAlertView alloc] initWithTitle:L(@"Unlock search") message:L(@"Browse uses search, which needs your own free Spotify developer key.") delegate:self cancelButtonTitle:L(@"Cancel") otherButtonTitles:L(@"Set up"),nil];
+        [a show]; return; }
     NSDictionary*cat=_cats[b.tag];
-    NSString*path=[NSString stringWithFormat:@"search?q=%@&type=track&market=from_token&limit=50",cat[@"q"]];
+    NSString*path=[NSString stringWithFormat:@"search?q=%@&type=track&limit=10",cat[@"q"]];   // mehr als 10 pro Seite lehnt die Web-API für Entwicklerschlüssel ab (400); weitere Seiten lädt die Liste beim Scrollen
     MMTrackListController*tl=[[MMTrackListController alloc] initWithTitle:cat[@"name"] path:path];
     [[MMRootController shared] pushContent:tl];   // im Inhaltsbereich -> untere Leisten bleiben sichtbar
+}
+- (void)alertView:(UIAlertView *)a clickedButtonAtIndex:(NSInteger)i {
+    if(i!=a.firstOtherButtonIndex) return;
+    MMKeySetupController*k=[[MMKeySetupController alloc] init]; k.skippable=NO;
+    k.onDone=^(BOOL saved){ [[MMRootController shared] popContent]; };
+    [[MMRootController shared] pushContent:k];
 }
 @end

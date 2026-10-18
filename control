@@ -1,9 +1,9 @@
 Package: io.github.ikiwy.spotify6
 Name: Spotify6
-Version: 1.0.0
+Version: 1.1.1
 Architecture: iphoneos-arm
 Description: Spotify player for iOS 6 (based on riff by Second Track)
-Maintainer: Sanelos
-Author: Sanelos
+Maintainer: kiwy
+Author: kiwy
 Section: Multimedia
 Depends: firmware (>= 6.0)

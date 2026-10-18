@@ -1,6 +1,7 @@
 #import "MMStartController.h"
 #import "SpotTheme.h"
 #import "MMRootController.h"
+#import "MMSongMenu.h"
 #import "MMSpotify.h"
 #import "MMCovers.h"
 #import "MMTrackListController.h"
@@ -228,11 +229,18 @@ static NSArray* byTime(NSArray*a,NSArray*b,NSString*(^key)(NSDictionary*),NSUInt
         UILabel*ti=[[UILabel alloc] initWithFrame:CGRectMake(0,cw+4,cw,16)]; ti.text=t[@"title"]; ti.font=[UIFont boldSystemFontOfSize:12.5]; ti.textColor=[SpotTheme ink]; [tile addSubview:ti];
         UILabel*ar=[[UILabel alloc] initWithFrame:CGRectMake(0,cw+20,cw,15)]; ar.text=t[@"artist"]; ar.font=[UIFont systemFontOfSize:11]; ar.textColor=[SpotTheme muted]; [tile addSubview:ar];
         UIButton*tap=[UIButton buttonWithType:UIButtonTypeCustom]; tap.frame=tile.bounds; tap.tag=sec*1000+i; [tap addTarget:self action:@selector(playTile:) forControlEvents:UIControlEventTouchUpInside]; [tile addSubview:tap];
+        UILongPressGestureRecognizer*lp=[[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(tileMenu:)]; lp.minimumPressDuration=0.45; [tap addGestureRecognizer:lp];   // lange drücken = Titel-Menü statt Album
         [row addSubview:tile]; x+=cw+pad;
     }
     row.contentSize=CGSizeMake(x,tileH);
     row.contentOffset=CGPointMake(MAX(0,MIN(ox,x-_W)),0);
     _y+=tileH+18;
+}
+- (void)tileMenu:(UILongPressGestureRecognizer *)g {
+    if(g.state!=UIGestureRecognizerStateBegan) return;
+    int sec=g.view.tag/1000, idx=g.view.tag%1000;
+    NSArray*list=(sec==1)?_recent:_top;
+    if(idx<(int)list.count) [MMSongMenu showForTrack:list[idx]];
 }
 - (void)playTile:(UIButton *)b {
     int sec=b.tag/1000, idx=b.tag%1000;

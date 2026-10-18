@@ -19,8 +19,8 @@ Spotify6 is based on [riff](https://github.com/SecondTrack/riff) by Second Track
   </tr>
   <tr>
     <td align="center" valign="top"><b>Song menu</b><br><img src="docs/screenshots/menu.png" width="190" alt="Song menu"></td>
-    <td align="center" valign="top"><b>Recent searches</b><br><img src="docs/screenshots/recent.png" width="190" alt="Recent searches"></td>
     <td align="center" valign="top"><b>Search</b><br><img src="docs/screenshots/search.png" width="190" alt="Search"></td>
+    <td align="center" valign="top"><b>Artist</b><br><img src="docs/screenshots/artist.png" width="190" alt="Artist"></td>
     <td align="center" valign="top"><b>Notification Center</b><br><img src="docs/screenshots/widget.png" width="190" alt="Notification Center"></td>
   </tr>
 </table>
@@ -36,6 +36,7 @@ Spotify6 is based on [riff](https://github.com/SecondTrack/riff) by Second Track
 - **Search** for artists, songs and albums, with your recent searches
 - **Artist and album pages**, with an optional big-cover look for albums and playlists
 - **Offline** playlists, albums and single songs, with resumable and background downloads
+- **Song cache**: recently played songs are kept on the phone (up to 500 MB), so they play again without downloading
 - **Notification Center widget** with cover, title, "Playing from …" and playback controls
 - **Mini player** you can swipe to skip, and a full player you drag down to close
 - **Official covers** for Spotify-made playlists such as Blends and Your Top Songs
@@ -51,7 +52,6 @@ Spotify6 is based on [riff](https://github.com/SecondTrack/riff) by Second Track
 | Installer | **AppSync** (Spotify6 installs as a normal app) |
 | Account | **Spotify Premium** |
 | Search | Your own free Spotify developer key (the app shows you how to create one in about three minutes) |
-| Widget | **WeeLoader** by chpwn, from Cydia |
 
 ## Signing in
 

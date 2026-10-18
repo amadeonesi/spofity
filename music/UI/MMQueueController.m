@@ -5,7 +5,7 @@
 #import "MMSongMenu.h"
 #import "MeshL10n.h"
 
-@interface MMQueueController () <UITableViewDataSource, UITableViewDelegate>
+@interface MMQueueController () <UITableViewDataSource, UITableViewDelegate, UIAlertViewDelegate>
 @end
 
 // Beide Kopf-Symbole auf demselben Raster: 26x26, Zeichen in einem 20x14-Feld mittig (Mitte y=11), Punkt (an) bei y=21.
@@ -30,6 +30,13 @@ static UIImage* repeatIcon(UIColor*col, BOOL dot){
         [p moveToPoint:CGPointMake(19,6)]; [p addLineToPoint:CGPointMake(19,9)]; [p addQuadCurveToPoint:CGPointMake(15.5,12) controlPoint:CGPointMake(19,12)]; [p addLineToPoint:CGPointMake(2,12)];
         [p moveToPoint:CGPointMake(5,9)]; [p addLineToPoint:CGPointMake(2,12)]; [p addLineToPoint:CGPointMake(5,15)];
         [p stroke]; });
+}
+// Warteschlange leeren: zwei Listenzeilen, rechts unten ein X
+static UIImage* clearIcon(UIColor*col){
+    return headerIcon(col,NO,^{
+        UIRectFill(CGRectMake(1,1,14,1.8)); UIRectFill(CGRectMake(1,6,14,1.8)); UIRectFill(CGRectMake(1,11,7,1.8));
+        UIBezierPath*x=[UIBezierPath bezierPath]; x.lineWidth=1.8; x.lineCapStyle=kCGLineCapRound;
+        [x moveToPoint:CGPointMake(12,8.5)]; [x addLineToPoint:CGPointMake(18,14.5)]; [x moveToPoint:CGPointMake(18,8.5)]; [x addLineToPoint:CGPointMake(12,14.5)]; [x stroke]; });
 }
 // Weiterspielen ("Als Nächstes"): drei Listenzeilen, unten rechts ein Play-Dreieck
 static UIImage* nextUpIcon(UIColor*col, BOOL dot){
@@ -96,6 +103,9 @@ static UIImage* gripIcon(void){
         UIButton*rb=[UIButton buttonWithType:UIButtonTypeCustom]; rb.frame=CGRectMake(W-20-22,22-11-2,44,IB+4);
         [rb setImage:repeatIcon(r.repeatQueue?[SpotTheme green]:[SpotTheme muted],r.repeatQueue) forState:UIControlStateNormal];
         [rb addTarget:self action:@selector(toggleRepeat) forControlEvents:UIControlEventTouchUpInside]; [v addSubview:rb];
+        UIButton*cb=[UIButton buttonWithType:UIButtonTypeCustom]; cb.frame=CGRectOffset(rb.frame,-44,0);   // links daneben: Warteschlange leeren
+        [cb setImage:clearIcon([SpotTheme muted]) forState:UIControlStateNormal];
+        [cb addTarget:self action:@selector(askClear) forControlEvents:UIControlEventTouchUpInside]; [v addSubview:cb];
     } else if(s==2){   // "Als Nächstes" an/aus (Symbol wie Wiederholen): aus = nach dem laufenden Titel und der Warteschlange ist Schluss
         UIButton*nb=[UIButton buttonWithType:UIButtonTypeCustom]; nb.frame=CGRectMake(W-20-22,22-11-2,44,IB+4);
         [nb setImage:nextUpIcon(r.nextUpEnabled?[SpotTheme green]:[SpotTheme muted],r.nextUpEnabled) forState:UIControlStateNormal];
@@ -143,6 +153,11 @@ static UIImage* gripIcon(void){
     else [[MMRootController shared] playQueueIndex:_idx+1+ip.row];
     [self reload];
 }
+- (void)askClear {
+    UIAlertView*a=[[UIAlertView alloc] initWithTitle:L(@"Clear queue?") message:L(@"Removes all songs from Next in queue.") delegate:self cancelButtonTitle:L(@"Cancel") otherButtonTitles:L(@"Clear"),nil];
+    [a show];
+}
+- (void)alertView:(UIAlertView *)a clickedButtonAtIndex:(NSInteger)i { if(i==a.firstOtherButtonIndex){ [[MMRootController shared] clearUserQueue]; [self reload]; } }
 - (void)toggleRepeat { MMRootController*r=[MMRootController shared]; r.repeatQueue=!r.repeatQueue; [self reload]; }
 - (void)toggleNextUp { MMRootController*r=[MMRootController shared]; r.nextUpEnabled=!r.nextUpEnabled; [self reload]; }
 - (void)removeAt:(NSIndexPath *)ip {

@@ -38,8 +38,14 @@ void MMLog(NSString *fmt, ...) NS_FORMAT_FUNCTION(1,2);   // ins App-Log (Librar
 + (void)markOffline:(NSString *)name trackIds:(NSArray *)trackIds;
 + (void)unmarkOffline:(NSArray *)trackIds;
 + (void)resumeOfflineDownloads;   // beim App-Start aufrufen
++ (NSDictionary *)downloadStatus;   // {queue: noch zu ladende IDs (erste = gerade), done, total, eta: Sekunden oder -1}
++ (NSArray *)downloadedTracks;      // @[ {id, bytes, date} ], neueste zuerst
++ (void)deleteDownload:(NSString *)trackId;   // Datei weg + aus den Offline-Listen (kein Auto-Resume)
++ (void)trackInfos:(NSArray *)trackIds completion:(void(^)(NSDictionary *byId))done;   // {id: {title, artist, cover}} übers Netz
 + (BOOL)isDownloading;            // läuft gerade ein Offline-Download?
 + (long long)freeDiskBytes;   // freier Speicher auf dem Gerät
++ (long long)songCacheBytes;   // zuletzt gespielte Songs auf der Platte (max. 500 MB)
++ (void)clearSongCache;
 + (long long)cacheBytes;      // Größe des Offline-Caches (.spotcache)
 + (BOOL)isLoading;   // true während ein Track geladen/entschlüsselt wird
 // Eigener Spotify-Entwickler-Schlüssel (nur für die Suche). Wird vor dem Speichern bei Spotify geprüft.

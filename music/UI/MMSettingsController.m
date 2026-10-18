@@ -6,12 +6,14 @@
 #import "MMKeySetupController.h"
 #import "MMKeepAlive.h"
 #import "MeshL10n.h"
+#import "MMDownloadsController.h"
 
 @interface MMSettingsController () <UITableViewDataSource, UITableViewDelegate>
 @end
 
 @implementation MMSettingsController {
     UITableView *_table;
+    NSArray *_items;      // flach: Titel-, Einstellungs- und Hinweis-Zeilen (keine schwebenden Abschnittsköpfe)
     NSArray *_sections;   // @[ @{title, footer, rows:@[ @{kind: switch|link|info|danger, title, key} ]} ]
 }
 
@@ -25,18 +27,21 @@
     UILabel*nav=[[UILabel alloc] initWithFrame:CGRectMake(90,8,W-180,34)]; nav.text=L(@"Settings"); nav.font=[UIFont boldSystemFontOfSize:16];
     nav.textColor=[SpotTheme ink]; nav.textAlignment=NSTextAlignmentCenter; nav.backgroundColor=[UIColor clearColor]; [self.view addSubview:nav];
 
-    _table=[[UITableView alloc] initWithFrame:CGRectMake(0,46,W,H-46) style:UITableViewStyleGrouped];
-    _table.backgroundView=nil; _table.backgroundColor=[SpotTheme bg];   // iOS 6: sonst Nadelstreifen-Hintergrund
-    _table.separatorColor=[SpotTheme line]; _table.dataSource=self; _table.delegate=self; _table.rowHeight=50;
-    _table.contentInset=UIEdgeInsetsMake(0,0,90,0); _table.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;
+    // flach wie in der Spotify-App: iOS-6-Gruppen zeichnen helle Kanten und Schatten um jede Karte
+    _table=[[UITableView alloc] initWithFrame:CGRectMake(0,46,W,H-46) style:UITableViewStylePlain];
+    _table.backgroundColor=[SpotTheme bg]; _table.separatorStyle=UITableViewCellSeparatorStyleNone;
+    _table.dataSource=self; _table.delegate=self; _table.rowHeight=54;
+    _table.contentInset=_table.scrollIndicatorInsets=UIEdgeInsetsMake(0,0,90,0); _table.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;
     [self.view addSubview:_table];
     [self build];
+    for(NSString*n in @[@"MMDownloadsChanged",@"MMDownloadDone"]) [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(refresh) name:n object:nil];
 }
+- (void)refresh { [self build]; [_table reloadData]; }   // z. B. nach dem Löschen auf der Downloads-Seite
+- (void)dealloc { [[NSNotificationCenter defaultCenter] removeObserver:self]; }
 - (void)viewWillAppear:(BOOL)a { [super viewWillAppear:a]; [self build]; [_table reloadData]; }   // z. B. nach dem Suchschlüssel
 - (void)build {
+    NSArray*dl=[MMSpotify downloadedTracks]; long long dlBytes=0; for(NSDictionary*d in dl) dlBytes+=[d[@"bytes"] longLongValue];
     _sections=@[
-      @{@"title":L(@"Playback & downloads"),@"footer":L(@"Keeps saving offline songs while Spotify6 is in the background."),
-        @"rows":@[@{@"kind":@"switch",@"title":L(@"Background download"),@"key":@"bg"}]},
       @{@"title":L(@"Display"),@"footer":L(@"Big covers: albums and playlists open with their cover at the top and numbered songs."),
         @"rows":@[@{@"kind":@"switch",@"title":L(@"Cover Flow when rotated"),@"key":@"cflow"},
                   @{@"kind":@"switch",@"title":L(@"Big album covers"),@"key":@"cover"}]},
@@ -44,9 +49,26 @@
         @"rows":@[@{@"kind":@"switch",@"title":L(@"Now playing widget"),@"key":@"ncw"}]},
       @{@"title":L(@"Search"),@"footer":L(@"Search uses your own free Spotify developer key."),
         @"rows":@[@{@"kind":@"link",@"title":[MMSpotify hasSearchKey]?L(@"Change search key"):L(@"Unlock search"),@"key":@"key"}]},
+      @{@"title":L(@"Downloads"),@"footer":L(@"Background download keeps saving offline songs while Spotify6 is in the background."),
+        @"rows":@[@{@"kind":@"link",@"title":L(@"Downloaded songs"),@"key":@"downloads",
+                    @"detail":LF(@"%lu · %@",(unsigned long)dl.count,[MMTrackListController fmtBytes:dlBytes])},
+                  @{@"kind":@"switch",@"title":L(@"Background download"),@"key":@"bg"}]},
+      @{@"title":L(@"Song cache"),@"footer":L(@"Recently played songs are kept (up to 500 MB) so they play again without downloading."),
+        @"rows":@[@{@"kind":@"info",@"title":L(@"In use"),@"detail":[MMTrackListController fmtBytes:[MMSpotify songCacheBytes]]},
+                  @{@"kind":@"button",@"title":L(@"Clear song cache"),@"key":@"clearcache"}]},
       @{@"title":L(@"Account"),@"footer":@"",
         @"rows":@[@{@"kind":@"info",@"title":L(@"Logged in to Spotify")},   // der Benutzername ist nur eine Kennung (31xh…), nichts zum Anzeigen
-                  @{@"kind":@"danger",@"title":L(@"Log out"),@"key":@"logout"}]}];
+                  @{@"kind":@"button",@"title":L(@"Log out"),@"key":@"logout",@"primary":@YES}]}];
+    NSMutableArray*it=[NSMutableArray array];
+    for(NSDictionary*sec in _sections){
+        [it addObject:@{@"kind":@"header",@"title":sec[@"title"],@"first":@(it.count==0)}];
+        NSArray*rows=sec[@"rows"];
+        for(NSUInteger i=0;i<rows.count;i++){ NSMutableDictionary*r=[rows[i] mutableCopy]; r[@"last"]=@(i+1==rows.count); [it addObject:r]; }
+        if([sec[@"footer"] length]) [it addObject:@{@"kind":@"footer",@"title":sec[@"footer"]}];
+    }
+    // ganz unten die installierte Version (aus der Info.plist, passt also immer zum Build)
+    [it addObject:@{@"kind":@"version",@"title":[NSString stringWithFormat:@"Spotify6 %@",[[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"]]}];
+    _items=it;
 }
 - (BOOL)valueFor:(NSString *)key {
     if([key isEqual:@"bg"]) return [MMKeepAlive enabled];
@@ -62,50 +84,84 @@
     else [MMTrackListController setCoverStyle:sw.on];   // gilt ab dem nächsten Öffnen einer Liste
 }
 
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return _sections.count; }
-- (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)s { return [_sections[s][@"rows"] count]; }
-- (CGFloat)tableView:(UITableView *)tv heightForHeaderInSection:(NSInteger)s { return 40; }
-- (UIView *)tableView:(UITableView *)tv viewForHeaderInSection:(NSInteger)s {
-    UIView*v=[[UIView alloc] initWithFrame:CGRectMake(0,0,tv.bounds.size.width,40)];
-    UILabel*l=[[UILabel alloc] initWithFrame:CGRectMake(20,16,tv.bounds.size.width-40,20)]; l.text=[_sections[s][@"title"] uppercaseString];
-    l.font=[UIFont boldSystemFontOfSize:12]; l.textColor=[SpotTheme muted]; l.backgroundColor=[UIColor clearColor]; [v addSubview:l];
-    return v;
+- (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)s { return _items.count; }
+static UIFont* footFont(void){ return [UIFont systemFontOfSize:13]; }
+- (CGFloat)tableView:(UITableView *)tv heightForRowAtIndexPath:(NSIndexPath *)ip {
+    NSDictionary*r=_items[ip.row]; NSString*kind=r[@"kind"];
+    if([kind isEqual:@"header"]) return [r[@"first"] boolValue]?44:58;
+    if([kind isEqual:@"version"]) return 48;
+    if([kind isEqual:@"footer"]) return ceilf([r[@"title"] sizeWithFont:footFont() constrainedToSize:CGSizeMake(tv.bounds.size.width-32,200) lineBreakMode:NSLineBreakByWordWrapping].height)+12;
+    return [kind isEqual:@"button"]?64:54;
 }
-- (CGFloat)tableView:(UITableView *)tv heightForFooterInSection:(NSInteger)s { return [_sections[s][@"footer"] length]?36:8; }
-- (UIView *)tableView:(UITableView *)tv viewForFooterInSection:(NSInteger)s {
-    UIView*v=[[UIView alloc] initWithFrame:CGRectMake(0,0,tv.bounds.size.width,36)];
-    UILabel*l=[[UILabel alloc] initWithFrame:CGRectMake(20,4,tv.bounds.size.width-40,30)]; l.text=_sections[s][@"footer"]; l.numberOfLines=2;
-    l.font=[UIFont systemFontOfSize:11]; l.textColor=[SpotTheme faint]; l.backgroundColor=[UIColor clearColor]; [v addSubview:l];
-    return v;
+// schmaler Pfeil nach rechts (statt des iOS-Pfeils)
+static UIImage* chevron(void){
+    static UIImage*img; if(img) return img;
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(8,14),NO,0); [[SpotTheme faint] setStroke];
+    UIBezierPath*p=[UIBezierPath bezierPath]; p.lineWidth=1.8; p.lineCapStyle=kCGLineCapRound; p.lineJoinStyle=kCGLineJoinRound;
+    [p moveToPoint:CGPointMake(1.5,1.5)]; [p addLineToPoint:CGPointMake(6.5,7)]; [p addLineToPoint:CGPointMake(1.5,12.5)]; [p stroke];
+    img=UIGraphicsGetImageFromCurrentImageContext(); UIGraphicsEndImageContext(); return img;
 }
 - (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
-    NSDictionary*r=_sections[ip.section][@"rows"][ip.row]; NSString*kind=r[@"kind"];
+    NSDictionary*r=_items[ip.row]; NSString*kind=r[@"kind"]; CGFloat W=tv.bounds.size.width, H=[self tableView:tv heightForRowAtIndexPath:ip];
     UITableViewCell*c=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];   // wenige Zeilen: kein Wiederverwenden nötig
-    c.backgroundColor=[SpotTheme card]; c.textLabel.backgroundColor=[UIColor clearColor];
-    c.textLabel.text=r[@"title"]; c.textLabel.font=[UIFont systemFontOfSize:16]; c.textLabel.textColor=[SpotTheme ink];
-    c.selectionStyle=UITableViewCellSelectionStyleNone;
+    c.backgroundColor=[SpotTheme bg]; c.selectionStyle=UITableViewCellSelectionStyleNone;
+    if([kind isEqual:@"header"]){   // Abschnittstitel groß und fett wie in der Spotify-App
+        UILabel*l=[[UILabel alloc] initWithFrame:CGRectMake(16,H-34,W-32,26)]; l.text=r[@"title"];
+        l.font=[UIFont boldSystemFontOfSize:19]; l.textColor=[SpotTheme ink]; l.backgroundColor=[UIColor clearColor]; [c.contentView addSubview:l]; return c;
+    }
+    if([kind isEqual:@"footer"]){   // Erklärung grau unter dem Abschnitt
+        UILabel*l=[[UILabel alloc] initWithFrame:CGRectMake(16,0,W-32,H-10)]; l.text=r[@"title"]; l.numberOfLines=0;
+        l.font=footFont(); l.textColor=[SpotTheme faint]; l.backgroundColor=[UIColor clearColor]; [c.contentView addSubview:l]; return c;
+    }
+    if([kind isEqual:@"version"]){
+        UILabel*l=[[UILabel alloc] initWithFrame:CGRectMake(16,8,W-32,H-8)]; l.text=r[@"title"]; l.textAlignment=NSTextAlignmentCenter;
+        l.font=footFont(); l.textColor=[SpotTheme faint]; l.backgroundColor=[UIColor clearColor]; [c.contentView addSubview:l]; return c;
+    }
+    UIView*sel=[[UIView alloc] init]; sel.backgroundColor=[SpotTheme card]; c.selectedBackgroundView=sel;
+    if([kind isEqual:@"button"]){   // Pille in der Mitte: "Log out" weiß gefüllt, sonst nur umrandet
+        BOOL primary=[r[@"primary"] boolValue];
+        UIButton*b=[UIButton buttonWithType:UIButtonTypeCustom]; b.frame=CGRectMake((W-220)/2,12,220,40); b.layer.cornerRadius=20;
+        b.backgroundColor=primary?[SpotTheme ink]:[UIColor clearColor];
+        if(!primary){ b.layer.borderWidth=1; b.layer.borderColor=[SpotTheme faint].CGColor; }
+        [b setTitle:r[@"title"] forState:UIControlStateNormal]; b.titleLabel.font=[UIFont boldSystemFontOfSize:15];
+        [b setTitleColor:primary?[UIColor blackColor]:[SpotTheme ink] forState:UIControlStateNormal];
+        [b setTitleColor:[SpotTheme muted] forState:UIControlStateHighlighted];
+        b.accessibilityIdentifier=r[@"key"]; [b addTarget:self action:@selector(tapButton:) forControlEvents:UIControlEventTouchUpInside];
+        [c.contentView addSubview:b]; return c;
+    }
+    if(![r[@"last"] boolValue]){ UIView*ln=[[UIView alloc] initWithFrame:CGRectMake(16,53.5,W-16,0.5)]; ln.backgroundColor=[SpotTheme line]; ln.autoresizingMask=UIViewAutoresizingFlexibleWidth; [c addSubview:ln]; }
+    UILabel*t=[[UILabel alloc] initWithFrame:CGRectMake(16,0,W-140,54)]; t.text=r[@"title"]; t.backgroundColor=[UIColor clearColor];
+    t.font=[UIFont systemFontOfSize:16]; t.textColor=[kind isEqual:@"info"]&&!r[@"detail"]?[SpotTheme muted]:[SpotTheme ink]; [c.contentView addSubview:t];
+    CGFloat right=W-16;
     if([kind isEqual:@"switch"]){
         UISwitch*sw=[[UISwitch alloc] init]; sw.onTintColor=[SpotTheme green]; sw.on=[self valueFor:r[@"key"]];
         sw.tag=[@[@"bg",@"cflow",@"cover",@"ncw"] indexOfObject:r[@"key"]];
-        [sw addTarget:self action:@selector(switched:) forControlEvents:UIControlEventValueChanged]; c.accessoryView=sw;
+        sw.frame=CGRectMake(right-sw.frame.size.width,(54-sw.frame.size.height)/2,sw.frame.size.width,sw.frame.size.height);
+        [sw addTarget:self action:@selector(switched:) forControlEvents:UIControlEventValueChanged]; [c.contentView addSubview:sw];
     } else if([kind isEqual:@"link"]){
-        c.accessoryType=UITableViewCellAccessoryDisclosureIndicator; c.selectionStyle=UITableViewCellSelectionStyleGray;
-    } else if([kind isEqual:@"info"]){
-        c.textLabel.textColor=[SpotTheme muted]; c.textLabel.font=[UIFont systemFontOfSize:14];
-    } else if([kind isEqual:@"danger"]){
-        c.textLabel.textColor=[UIColor colorWithRed:0.95 green:0.33 blue:0.33 alpha:1]; c.textLabel.textAlignment=NSTextAlignmentCenter;
-        c.textLabel.font=[UIFont boldSystemFontOfSize:16]; c.selectionStyle=UITableViewCellSelectionStyleGray;
+        UIImageView*ch=[[UIImageView alloc] initWithImage:chevron()]; ch.center=CGPointMake(right-4,27); [c.contentView addSubview:ch]; right-=18;
+        c.selectionStyle=UITableViewCellSelectionStyleGray;
+    }
+    if(r[@"detail"]){
+        UILabel*d=[[UILabel alloc] initWithFrame:CGRectMake(right-130,0,130,54)]; d.text=r[@"detail"]; d.textAlignment=NSTextAlignmentRight;
+        d.font=[UIFont systemFontOfSize:15]; d.textColor=[SpotTheme muted]; d.backgroundColor=[UIColor clearColor]; [c.contentView addSubview:d];
     }
     return c;
 }
+- (void)tapButton:(UIButton *)b { [self run:b.accessibilityIdentifier]; }
 - (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
     [tv deselectRowAtIndexPath:ip animated:YES];
-    NSString*key=_sections[ip.section][@"rows"][ip.row][@"key"];
+    NSDictionary*r=_items[ip.row];
+    if([r[@"kind"] isEqual:@"link"]) [self run:r[@"key"]];
+}
+- (void)run:(NSString *)key {
     if([key isEqual:@"key"]){
         MMKeySetupController*k=[[MMKeySetupController alloc] init]; k.skippable=NO;
         k.onDone=^(BOOL saved){ [[MMRootController shared] popContent]; };
         [[MMRootController shared] pushContent:k];
     } else if([key isEqual:@"logout"]) [MMRootController confirmLogout];
+    else if([key isEqual:@"downloads"]) [[MMRootController shared] pushContent:[[MMDownloadsController alloc] init]];
+    else if([key isEqual:@"clearcache"]){ [MMSpotify clearSongCache]; [self build]; [_table reloadData]; }
 }
 - (void)close { [[MMRootController shared] popContent]; }
 @end

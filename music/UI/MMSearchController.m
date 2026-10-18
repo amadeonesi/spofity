@@ -9,7 +9,7 @@
 #import "MMArtistController.h"
 #import "MMSongMenu.h"
 
-@interface MMSearchController () <UITableViewDataSource, UITableViewDelegate, UITextFieldDelegate>
+@interface MMSearchController () <UITableViewDataSource, UITableViewDelegate, UITextFieldDelegate, UIGestureRecognizerDelegate>
 @end
 
 @implementation MMSearchController {
@@ -41,7 +41,8 @@
 
     _table=[[UITableView alloc] initWithFrame:CGRectMake(0,98,W,H-98) style:UITableViewStylePlain];
     _table.backgroundColor=[SpotTheme bg]; _table.separatorStyle=UITableViewCellSeparatorStyleNone;
-    _table.dataSource=self; _table.delegate=self; _table.rowHeight=66; _table.contentInset=UIEdgeInsetsMake(0,0,60,0); [self.view addSubview:_table];
+    _table.dataSource=self; _table.delegate=self; _table.rowHeight=66; _table.contentInset=_table.scrollIndicatorInsets=UIEdgeInsetsMake(0,0,84,0);
+    _table.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight; [self.view addSubview:_table];   // mit dem Inhaltsbereich (über der Tab-Leiste) mitschrumpfen   // Platz für Now-Playing + Download-Leiste
 
     _hint=[[UILabel alloc] initWithFrame:CGRectMake(20,140,W-40,40)]; _hint.text=L(@"Find millions of songs."); _hint.textColor=[SpotTheme faint]; _hint.font=[SpotTheme sub]; _hint.textAlignment=NSTextAlignmentCenter; _hint.numberOfLines=0; [self.view addSubview:_hint];
 
@@ -58,12 +59,18 @@
         if([k isEqualToString:@"recent"]){ NSDictionary*r=s->_recents[ip.row]; return [r[@"kind"] isEqual:@"track"]?[MMSearchController trackOf:r]:nil; }
         return [k isEqualToString:@"tracks"]?s->_results[ip.row]:nil; }];
     [_field addTarget:self action:@selector(fieldChanged) forControlEvents:UIControlEventEditingChanged];
+    // Tastatur weg: irgendwo daneben tippen (Zeilen bleiben antippbar) oder die Liste ziehen
+    UITapGestureRecognizer*kt=[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(hideKeyboard)];
+    kt.cancelsTouchesInView=NO; kt.delegate=self; [self.view addGestureRecognizer:kt];
 #ifdef DEBUG
     [[NSNotificationCenter defaultCenter] addObserverForName:@"MMDebugSearch" object:nil queue:nil usingBlock:^(NSNotification*n){ _field.text=n.object; [self doSearch:n.object]; }];
 #endif
 }
 
 - (void)viewDidLoad { [super viewDidLoad]; [self refreshKeyState]; [self showRecents]; }
+- (void)viewWillAppear:(BOOL)a { [super viewWillAppear:a]; [self fitBottomInset]; }
+// Unten genau so viel Platz wie die sichtbaren Leisten brauchen (die Download-Leiste ist meist aus)
+- (void)fitBottomInset { _table.contentInset=_table.scrollIndicatorInsets=UIEdgeInsetsMake(0,0,[[MMRootController shared] bottomBarsHeight]+8,0); }
 
 // ---- Zuletzt gesucht: was nach einer Suche angetippt wurde (Artist, Album, Titel), höchstens 10 ----
 #define kRecentsKey @"searchRecents"
@@ -79,7 +86,7 @@
 - (void)showRecents {
     if(![MMSpotify hasSearchKey]) return;
     _recents=[self loadRecents]; _results=nil; _artists=nil; _albums=nil;
-    _secs=_recents.count?@[@"recent"]:@[]; [_table reloadData];
+    _secs=_recents.count?@[@"recent"]:@[]; [self fitBottomInset]; [_table reloadData];
     _hint.hidden=(_recents.count>0); _hint.text=L(@"Find millions of songs.");
 }
 - (void)fieldChanged { if(!_field.text.length) [self showRecents]; }
@@ -105,6 +112,9 @@
     [[MMRootController shared] pushContent:k];
 }
 
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)g shouldReceiveTouch:(UITouch *)t { return _field.isFirstResponder && ![t.view isDescendantOfView:_field.superview]; }
+- (void)hideKeyboard { [self.view endEditing:YES]; }
+- (void)scrollViewWillBeginDragging:(UIScrollView *)sv { [self hideKeyboard]; }
 - (BOOL)textFieldShouldReturn:(UITextField *)tf { [tf resignFirstResponder]; [self doSearch:tf.text]; return YES; }
 
 static NSString* str(id v){ return [v isKindOfClass:[NSString class]]?v:@""; }
@@ -132,7 +142,7 @@ static NSArray* items(NSDictionary*j,NSString*k){ id v=[j[k] isKindOfClass:[NSDi
         if(ar.count)[secs addObject:@"artists"];
         if(tr.count)[secs addObject:@"tracks"];
         if(al.count)[secs addObject:@"albums"];
-        _secs=secs; [_table reloadData]; [_table setContentOffset:CGPointZero animated:NO];
+        _secs=secs; [self fitBottomInset]; [_table reloadData]; [_table setContentOffset:CGPointZero animated:NO];
         if(!secs.count){ _hint.text=(st>=500)?L(@"Spotify isn't responding – please try again."):(st==401)?L(@"Your search key no longer works. Long-press \"Search\" at the top to change it."):L(@"Nothing found."); _hint.hidden=NO; return; }
         _hint.hidden=YES;
     }];

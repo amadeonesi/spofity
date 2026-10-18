@@ -25,6 +25,7 @@
 @property (nonatomic) BOOL repeatQueue;       // eingereihte Titel endlos wiederholen
 @property (nonatomic) BOOL nextUpEnabled;     // aus = nach dem laufenden Titel und der Warteschlange stoppen
 - (void)openQueue;                            // Warteschlange als Vollbild
+- (void)clearUserQueue;                        // ganze Warteschlange leeren
 - (void)removeUserQueueIndex:(NSInteger)idx;   // eingereihten Titel entfernen
 - (void)removeQueueIndex:(NSInteger)idx;       // kommenden Titel der Liste entfernen (Index in queue, nach dem laufenden)
 // Seite im Inhaltsbereich zeigen; offene Vollbild-Ansichten (Player, Warteschlange) schließen sich vorher
@@ -45,6 +46,7 @@
 + (void)setCoverFlowOnRotate:(BOOL)on;
 // Ansicht im Inhaltsbereich öffnen/schließen (bleibt über Tab-/Now-Playing-/Download-Leiste)
 - (void)pushContent:(UIViewController *)vc;
+- (CGFloat)bottomBarsHeight;   // Höhe der gerade sichtbaren Leisten über der Tab-Leiste (Now-Playing + Download)
 - (void)popContent;
 // globale Offline-Download-Leiste (immer sichtbar wenn aktiv)
 - (void)showDownloadProgress:(NSInteger)done total:(NSInteger)total;
