@@ -49,11 +49,7 @@
 
     // Download-Symbol oben links (gegenüber dem Zahnrad): öffnet die Downloads-Seite (laufende + heruntergeladene)
     _dlBtn=[UIButton buttonWithType:UIButtonTypeCustom]; _dlBtn.frame=CGRectMake(4,6,44,38);
-    UIGraphicsBeginImageContextWithOptions(CGSizeMake(22,22),NO,0); [[SpotTheme ink] setStroke];
-    UIBezierPath*dc=[UIBezierPath bezierPathWithOvalInRect:CGRectMake(1,1,20,20)]; dc.lineWidth=1.6; [dc stroke];
-    UIBezierPath*da=[UIBezierPath bezierPath]; da.lineWidth=1.8; da.lineCapStyle=kCGLineCapRound; da.lineJoinStyle=kCGLineJoinRound;
-    [da moveToPoint:CGPointMake(11,6)]; [da addLineToPoint:CGPointMake(11,15.5)]; [da moveToPoint:CGPointMake(7,11.5)]; [da addLineToPoint:CGPointMake(11,15.5)]; [da addLineToPoint:CGPointMake(15,11.5)]; [da stroke];
-    [_dlBtn setImage:UIGraphicsGetImageFromCurrentImageContext() forState:UIControlStateNormal]; UIGraphicsEndImageContext();
+    [self drawDlBtn];
     [_dlBtn addTarget:self action:@selector(openDownloads) forControlEvents:UIControlEventTouchUpInside]; [self.view addSubview:_dlBtn];
 
     _table=[[UITableView alloc] initWithFrame:CGRectMake(0,48,W,H-48) style:UITableViewStylePlain];
@@ -74,8 +70,9 @@
 
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(dlRefresh) name:@"MMDownloadDone" object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(dlRefresh) name:@"MMDownloadsChanged" object:nil];
+    for(NSString*n in @[@"MMDownloadProgress",@"MMDownloadFull",@"MMDownloadError"]) [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(drawDlBtn) name:n object:nil];
 }
-- (void)dlRefresh { [_dlMemo removeAllObjects]; [_table reloadData]; [self updateHasDl]; }
+- (void)dlRefresh { [_dlMemo removeAllObjects]; [_table reloadData]; [self updateHasDl]; [self drawDlBtn]; }
 - (void)openDownloads { [[MMRootController shared] pushContent:[[MMDownloadsController alloc] init]]; }   // ✓-Badges nach Download-Ende aktualisieren
 - (void)dealloc { [[NSNotificationCenter defaultCenter] removeObserver:self]; }
 
@@ -94,6 +91,15 @@
     NSMutableArray*out=[NSMutableArray array];
     for(id it in items){ if(![it isKindOfClass:[NSDictionary class]])continue; id tw=((NSDictionary*)it)[@"track"]; NSDictionary*t=[tw isKindOfClass:[NSDictionary class]]?tw:(NSDictionary*)it; id tid=t[@"id"]; if([tid isKindOfClass:[NSString class]])[out addObject:tid]; }
     return out;
+}
+// Download-Symbol: weiß, grün solange etwas herunterlädt
+- (void)drawDlBtn {
+    BOOL on=[MMSpotify isDownloading]; if(_dlBtn.tag==(on?2:1)) return; _dlBtn.tag=on?2:1;
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(22,22),NO,0); [(on?[SpotTheme green]:[SpotTheme ink]) setStroke];
+    UIBezierPath*dc=[UIBezierPath bezierPathWithOvalInRect:CGRectMake(1,1,20,20)]; dc.lineWidth=1.6; [dc stroke];
+    UIBezierPath*da=[UIBezierPath bezierPath]; da.lineWidth=1.8; da.lineCapStyle=kCGLineCapRound; da.lineJoinStyle=kCGLineJoinRound;
+    [da moveToPoint:CGPointMake(11,6)]; [da addLineToPoint:CGPointMake(11,15.5)]; [da moveToPoint:CGPointMake(7,11.5)]; [da addLineToPoint:CGPointMake(11,15.5)]; [da addLineToPoint:CGPointMake(15,11.5)]; [da stroke];
+    [_dlBtn setImage:UIGraphicsGetImageFromCurrentImageContext() forState:UIControlStateNormal]; UIGraphicsEndImageContext();
 }
 - (NSInteger)lrow:(NSInteger)tableRow { return tableRow-(_hasDl?1:0); }
 - (void)updateHasDl { BOOL h=[MMSpotify downloadedTracks].count>0; if(h!=_hasDl){ _hasDl=h; [_table reloadData]; } }
@@ -151,7 +157,7 @@
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
     [_dlMemo removeAllObjects];   // Listen könnten inzwischen neu gecacht oder geladen sein
-    [self updateHasDl];
+    [self updateHasDl]; [self drawDlBtn];
     if(_loaded) return;
     if(![MMSpotify hasUserToken]){ _hint.text=L(@"Please log in again."); return; }
     _loaded=YES; _hint.text=L(@"Loading your playlists …");

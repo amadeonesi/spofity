@@ -7,6 +7,7 @@
 #import "MMKeepAlive.h"
 #import "MeshL10n.h"
 #import "MMDownloadsController.h"
+#import "MMDiagnosticsController.h"
 
 @interface MMSettingsController () <UITableViewDataSource, UITableViewDelegate>
 @end
@@ -58,7 +59,9 @@
                   @{@"kind":@"button",@"title":L(@"Clear song cache"),@"key":@"clearcache"}]},
       @{@"title":L(@"Account"),@"footer":@"",
         @"rows":@[@{@"kind":@"info",@"title":L(@"Logged in to Spotify")},   // der Benutzername ist nur eine Kennung (31xh…), nichts zum Anzeigen
-                  @{@"kind":@"button",@"title":L(@"Log out"),@"key":@"logout",@"primary":@YES}]}];
+                  @{@"kind":@"button",@"title":L(@"Log out"),@"key":@"logout",@"primary":@YES}]},
+      @{@"title":L(@"Help"),@"footer":L(@"If songs don't play, open this and send a screenshot to the developer."),
+        @"rows":@[@{@"kind":@"link",@"title":L(@"Debug info"),@"key":@"diag"}]}];
     NSMutableArray*it=[NSMutableArray array];
     for(NSDictionary*sec in _sections){
         [it addObject:@{@"kind":@"header",@"title":sec[@"title"],@"first":@(it.count==0)}];
@@ -160,6 +163,7 @@ static UIImage* chevron(void){
         k.onDone=^(BOOL saved){ [[MMRootController shared] popContent]; };
         [[MMRootController shared] pushContent:k];
     } else if([key isEqual:@"logout"]) [MMRootController confirmLogout];
+    else if([key isEqual:@"diag"]) [[MMRootController shared] pushContent:[[MMDiagnosticsController alloc] init]];
     else if([key isEqual:@"downloads"]) [[MMRootController shared] pushContent:[[MMDownloadsController alloc] init]];
     else if([key isEqual:@"clearcache"]){ [MMSpotify clearSongCache]; [self build]; [_table reloadData]; }
 }

@@ -196,6 +196,10 @@ static MMRootController *gRoot;
     [self restoreState];
     [MMSpotify startNetworkWatch];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(networkChanged:) name:@"MMNetworkChanged" object:nil];
+    // Hinweise, warum nichts spielt (je einmal pro App-Start, kommt aus MMSpotify)
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(portsBlocked) name:@"MMSpotifyPortsBlocked" object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(notPremium) name:@"MMSpotifyNotPremium" object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(keysRefused) name:@"MMSpotifyKeysRefused" object:nil];
     [MMKeepAlive start];   // Offline-Downloads laufen im Hintergrund weiter (auch bei gesperrtem Bildschirm)
     // iPod quer drehen -> Cover Flow
     [[UIDevice currentDevice] beginGeneratingDeviceOrientationNotifications];
@@ -509,6 +513,12 @@ static NSArray* shuffledFrom(NSArray*list,NSInteger idx){
 }
 
 - (void)playTrackId:(NSString *)trackId title:(NSString *)title artist:(NSString *)artist cover:(NSString *)cover {
+    // offline: Songs, die nicht gespeichert sind, überspringen statt hängen zu bleiben (höchstens einmal die ganze Liste durch)
+    static NSInteger skips=0;
+    if(![MMSpotify networkReachable] && ![MMSpotify playableOffline:trackId]){
+        if(skips++ <= (NSInteger)(_queue.count+_userQueue.count)){ MMLog(@"offline: überspringe %@",trackId); [self playNext]; return; }
+    }
+    skips=0;
     _curId=trackId; _curTitle=title; _curArtist=artist; _curCover=cover; _curAlbumId=nil; _curAlbum=nil; _curArtistId=nil;
     _npTitle.text=title; _npArtist.text=artist; _npBar.hidden=NO;
     for(UIView*v in _npCover.subviews)[v removeFromSuperview];
@@ -535,6 +545,7 @@ static NSArray* shuffledFrom(NSArray*list,NSInteger idx){
     _playStartTS=0;
     [MMSpotify playTrack:trackId completion:^(BOOL ok,NSString*e){
         [_npSpinner stopAnimating]; _npPlay.hidden=NO;
+        if(!ok) [self showPlayError:e?:@""];
         if(ok){ _playStartTS=[NSDate timeIntervalSinceReferenceDate]; if(_pendingSeek>0){ [MMAudio seekTo:_pendingSeek]; _pendingSeek=0; } [self prefetchNext]; [self saveState]; }
         [self drawNpPlay]; [self updateNowPlaying];
     }];
@@ -585,6 +596,24 @@ static NSArray* shuffledFrom(NSArray*list,NSInteger idx){
     [self playOrRestart];
 }
 
+- (void)portsBlocked {
+    [[[UIAlertView alloc] initWithTitle:L(@"Can't reach Spotify") message:L(@"This network seems to block Spotify's ports (4070, 443 and 80), so songs can't load. Library and search still work. Try another Wi-Fi or mobile data.") delegate:nil cancelButtonTitle:L(@"OK") otherButtonTitles:nil] show];
+}
+- (void)keysRefused {
+    [[[UIAlertView alloc] initWithTitle:L(@"Spotify won't play songs for this account") message:L(@"Spotify refuses the song keys for your account, so songs can't play or download. Library and search still work. This mostly happens with newly created Premium or trial accounts. An older Premium account works. If your account is older, try again later.") delegate:nil cancelButtonTitle:L(@"OK") otherButtonTitles:nil] show];
+}
+- (void)notPremium {
+    [[[UIAlertView alloc] initWithTitle:L(@"Spotify Premium needed") message:LF(@"Your Spotify account is \"%@\", not Premium. Spotify only lets Premium accounts play songs in other apps like Spotify6.",[MMSpotify productType]?:@"?") delegate:nil cancelButtonTitle:L(@"OK") otherButtonTitles:nil] show];
+}
+// kurzer Grund in der Leiste unten, wenn ein Song nicht startet (statt endlosem Kreisel)
+- (void)showPlayError:(NSString *)e {
+    NSString*m=L(@"Couldn't play this song");
+    if([e rangeOfString:@"AudioKey"].location!=NSNotFound) m=L(@"Spotify didn't send the song key");
+    else if([e rangeOfString:@"not reachable"].location!=NSNotFound || [e rangeOfString:@"logged in"].location!=NSNotFound || [e rangeOfString:@"apresolve"].location!=NSNotFound) m=L(@"Couldn't reach Spotify");
+    else if([e rangeOfString:@"CDN"].location!=NSNotFound) m=L(@"Song download failed");
+    else if([e rangeOfString:@"No playable file"].location!=NSNotFound) m=L(@"This song isn't available");
+    [self showDownloadMessage:m];
+}
 - (void)networkChanged:(NSNotification *)n {
     BOOL ok=[n.userInfo[@"reachable"] boolValue];
     [self showDownloadMessage:ok?L(@"Back online"):L(@"Offline – downloaded songs still play")];

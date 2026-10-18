@@ -143,7 +143,7 @@ static NSArray* items(NSDictionary*j,NSString*k){ id v=[j[k] isKindOfClass:[NSDi
         if(tr.count)[secs addObject:@"tracks"];
         if(al.count)[secs addObject:@"albums"];
         _secs=secs; [self fitBottomInset]; [_table reloadData]; [_table setContentOffset:CGPointZero animated:NO];
-        if(!secs.count){ _hint.text=(st>=500)?L(@"Spotify isn't responding – please try again."):(st==401)?L(@"Your search key no longer works. Long-press \"Search\" at the top to change it."):L(@"Nothing found."); _hint.hidden=NO; return; }
+        if(!secs.count){ _hint.text=![MMSpotify networkReachable]?L(@"You're offline. Search needs an internet connection."):(st>=500)?L(@"Spotify isn't responding – please try again."):(st==401)?L(@"Your search key no longer works. Long-press \"Search\" at the top to change it."):L(@"Nothing found."); _hint.hidden=NO; return; }
         _hint.hidden=YES;
     }];
 }

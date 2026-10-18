@@ -9,6 +9,8 @@
 #import <unistd.h>
 #import <sys/stat.h>
 #import <sys/time.h>
+#import <fcntl.h>
+#import <sys/sysctl.h>
 #import <string.h>
 #import <arpa/inet.h>
 #import <SystemConfiguration/SystemConfiguration.h>
@@ -19,6 +21,7 @@
 #import "mbedtls/entropy.h"
 #import "mbedtls/x509_crt.h"
 #import "psa/crypto.h"
+#import "MMCovers.h"
 
 static const unsigned char DH_PRIME[96]={
  0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xff,0xc9,0x0f,0xda,0xa2,0x21,0x68,0xc2,0x34,
@@ -87,20 +90,68 @@ static void base62ToGid(NSString*b62,unsigned char gid[16]){
 static int gSock=-1; static shn_ctx gSnd,gRcv; static uint32_t gSend=0,gRecv=0; static uint64_t gMercSeq=1;
 static NSString*gToken=nil; static NSString*gClientToken=nil; static NSString*gSpclient=nil;
 static BOOL gLoading=NO;
+// TCP-Verbindung mit Zeitlimit (blockierendes connect() hängt bei gesperrtem Port ~75 s pro Server).
+// Danach Lese-/Schreib-Zeitlimit, damit eine stumme Verbindung nie die ganze Wiedergabe blockiert.
+#define AP_CONNECT_TIMEOUT 6
+#define AP_IO_TIMEOUT 20
+static int tcpConnect(const struct sockaddr_in*sa, NSString**why){
+    int t=socket(AF_INET,SOCK_STREAM,0); if(t<0){ *why=@"socket"; return -1; }
+    int fl=fcntl(t,F_GETFL,0); fcntl(t,F_SETFL,fl|O_NONBLOCK);
+    int r=connect(t,(const struct sockaddr*)sa,sizeof(*sa));
+    if(r!=0 && errno==EINPROGRESS){
+        fd_set w; FD_ZERO(&w); FD_SET(t,&w); struct timeval tv={AP_CONNECT_TIMEOUT,0};
+        r=select(t+1,NULL,&w,NULL,&tv);
+        if(r==0){ *why=@"timeout"; close(t); return -1; }
+        int e=0; socklen_t el=sizeof e; getsockopt(t,SOL_SOCKET,SO_ERROR,&e,&el);
+        if(r<0 || e){ *why=[NSString stringWithFormat:@"error %d",e?:errno]; close(t); return -1; }
+    } else if(r!=0){ *why=[NSString stringWithFormat:@"error %d",errno]; close(t); return -1; }
+    fcntl(t,F_SETFL,fl);
+    struct timeval io={AP_IO_TIMEOUT,0}; setsockopt(t,SOL_SOCKET,SO_RCVTIMEO,&io,sizeof io); setsockopt(t,SOL_SOCKET,SO_SNDTIMEO,&io,sizeof io);
+    int one=1; setsockopt(t,SOL_SOCKET,SO_NOSIGPIPE,&one,sizeof one);
+    return t;
+}
+// Konto-Art und Land kommen nach dem Login als eigene Pakete (0x50 ProductInfo, 0x1b Land)
+static NSString*gProductType=nil, *gCountry=nil;
+// Schlüssel-Verweigerung: seit Okt. 2026 gibt Spotify neu angelegten (Premium-/Probe-)Konten keine Song-Schlüssel mehr
+// (Fehlercode 1). Erkennen: mehrere Verweigerungen hintereinander, ohne dass in dieser Sitzung je ein Schlüssel kam.
+static NSInteger gKeyRefusedRow=0, gKeyRefusedTotal=0, gKeyLastCode=-1; static BOOL gKeyEverOK=NO;
+static BOOL accountKeysRefused(void){ return !gKeyEverOK && gKeyRefusedRow>=3; }
+static void postOnce(NSString*name){
+    static NSMutableSet*sent; @synchronized([NSObject class]){ if(!sent) sent=[NSMutableSet set]; if([sent containsObject:name]) return; [sent addObject:name]; }
+    dispatch_async(dispatch_get_main_queue(), ^{ [[NSNotificationCenter defaultCenter] postNotificationName:name object:nil]; });
+}
+static void notePacket(int cmd, NSData*d){
+    if(cmd==0x1b && d.length>=2){ gCountry=[[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding]; slog(@"country=%@",gCountry); }
+    if(cmd==0x50){
+        NSString*x=[[NSString alloc] initWithData:d encoding:NSUTF8StringEncoding];
+        NSRange a=[x rangeOfString:@"<type>"], b=[x rangeOfString:@"</type>"];
+        if(a.location!=NSNotFound && b.location!=NSNotFound && b.location>a.location+a.length){
+            gProductType=[x substringWithRange:NSMakeRange(a.location+a.length,b.location-a.location-a.length)];
+            slog(@"account type=%@",gProductType);
+            if(![gProductType isEqualToString:@"premium"]) postOnce(@"MMSpotifyNotPremium");
+        }
+    }
+}
 static void sendpkt(int cmd,NSData*payload){
     NSMutableData*p=[NSMutableData data];unsigned char c=cmd;[p appendBytes:&c length:1];
     uint16_t l=htons((uint16_t)payload.length);[p appendBytes:&l length:2];[p appendData:payload];
     shn_nonce_u32(&gSnd,gSend++);shn_encrypt(&gSnd,p.mutableBytes,(int)p.length);
-    unsigned char mac[4];shn_finish(&gSnd,mac,4);write(gSock,p.bytes,p.length);write(gSock,mac,4);
+    unsigned char mac[4];shn_finish(&gSnd,mac,4);
+    if(write(gSock,p.bytes,p.length)<0 || write(gSock,mac,4)<0){ slog(@"ap write failed (errno %d) -> close",errno); close(gSock); gSock=-1; }
 }
 static NSData* recvpkt(int*cmd){
+    if(gSock<0) return nil;
     shn_nonce_u32(&gRcv,gRecv++);
-    unsigned char h[3];if(rd_all(gSock,h,3))return nil;shn_decrypt(&gRcv,h,3);
+    // Zeitlimit/abgerissen: Verbindung schließen (die Verschlüsselung ist danach aus dem Takt), der nächste Versuch verbindet neu
+    unsigned char h[3];if(rd_all(gSock,h,3)){ slog(@"ap read timeout/closed -> close"); close(gSock); gSock=-1; return nil; }
+    shn_decrypt(&gRcv,h,3);
     *cmd=h[0];int len=(h[1]<<8)|h[2];
-    unsigned char*pay=malloc(len?len:1);if(len&&rd_all(gSock,pay,len)){free(pay);return nil;}
+    unsigned char*pay=malloc(len?len:1);if(len&&rd_all(gSock,pay,len)){free(pay); slog(@"ap read timeout/closed -> close"); close(gSock); gSock=-1; return nil;}
     if(len)shn_decrypt(&gRcv,pay,len);
     unsigned char mac[4];rd_all(gSock,mac,4);
-    NSData*d=[NSData dataWithBytes:pay length:len];free(pay);return d;
+    NSData*d=[NSData dataWithBytes:pay length:len];free(pay);
+    notePacket(*cmd,d);
+    return d;
 }
 
 // ---- Client-Token (HTTPS POST, Anti-Bot) ----
@@ -195,16 +246,28 @@ static BOOL gLoginRejected=NO;   // letzte Anmeldung von Spotify abgelehnt (nich
     uint32_t size=2+4+(uint32_t)ch.length;NSMutableData*pkt=[NSMutableData data];unsigned char hd[2]={0,4};[pkt appendBytes:hd length:2];uint32_t be=htonl(size);[pkt appendBytes:&be length:4];[pkt appendData:ch];
 
     // AP-Verbindung
-    gLog=nil; slog(@"=== login %@", [NSDate date]);
+    slog(@"=== login %@", [NSDate date]);   // Log nicht leeren: Fehler vor dem Reconnect bleiben für "Fehlerinfos" sichtbar
     slog(@"cred.len=%lu", (unsigned long)credBlob.length);
     NSData*ad=[NSData dataWithContentsOfURL:[NSURL URLWithString:@"https://apresolve.spotify.com/?type=accesspoint"]];
     slog(@"apresolve bytes=%lu", (unsigned long)ad.length);
     NSArray*aps=ad?[NSJSONSerialization JSONObjectWithData:ad options:0 error:NULL][@"accesspoint"]:nil;
     slog(@"ap count=%lu", (unsigned long)aps.count);
     if(!aps.count){ if(err)*err=@"No network (apresolve)"; return nil; }
-    int s=-1;for(NSString*ap in aps){NSArray*hp=[ap componentsSeparatedByString:@":"];struct hostent*he=gethostbyname([hp[0] UTF8String]);if(!he)continue;int t=socket(AF_INET,SOCK_STREAM,0);struct sockaddr_in sa;memset(&sa,0,sizeof(sa));sa.sin_family=AF_INET;sa.sin_port=htons([hp[1] intValue]);memcpy(&sa.sin_addr,he->h_addr,he->h_length);if(connect(t,(struct sockaddr*)&sa,sizeof(sa))==0){s=t;break;}close(t);}
+    // Server der Reihe nach, je höchstens AP_CONNECT_TIMEOUT s (Spotify bietet Ports 4070, 443 und 80 an)
+    int s=-1; NSMutableArray*tried=[NSMutableArray array];
+    for(NSString*ap in aps){
+        NSArray*hp=[ap componentsSeparatedByString:@":"]; if(hp.count<2) continue;
+        struct hostent*he=gethostbyname([hp[0] UTF8String]); if(!he){ [tried addObject:[NSString stringWithFormat:@"%@ dns",ap]]; continue; }
+        struct sockaddr_in sa; memset(&sa,0,sizeof(sa)); sa.sin_family=AF_INET; sa.sin_port=htons([hp[1] intValue]); memcpy(&sa.sin_addr,he->h_addr,he->h_length);
+        NSString*why=nil; int t=tcpConnect(&sa,&why);
+        slog(@"ap try %@ -> %@", ap, t>=0?@"ok":why);
+        if(t>=0){ s=t; break; }
+        [tried addObject:[NSString stringWithFormat:@"%@ %@",ap,why]];
+    }
     slog(@"ap socket=%d", s);
-    if(s<0){ if(err)*err=@"Spotify server not reachable"; return nil; }
+    if(s<0){   // apresolve (HTTPS) ging, aber kein Spotify-Server auf keinem Port: Netz sperrt die Ports
+        slog(@"ap all failed: %@",[tried componentsJoinedByString:@", "]); postOnce(@"MMSpotifyPortsBlocked");
+        if(err)*err=@"Spotify server not reachable"; return nil; }
     write(s,pkt.bytes,pkt.length);NSMutableData*acc=[NSMutableData dataWithData:pkt];
 
     unsigned char lb[4];if(rd_all(s,lb,4)){close(s);if(err)*err=@"Handshake interrupted";return nil;}uint32_t blen=ntohl(*(uint32_t*)lb)-4;
@@ -234,7 +297,6 @@ static BOOL gLoginRejected=NO;   // letzte Anmeldung von Spotify abgelehnt (nich
     unsigned char*pay=malloc(rlen?rlen:1);if(rlen&&rd_all(s,pay,rlen)){free(pay);close(s);gSock=-1;if(err)*err=@"Reply interrupted";return nil;}
     if(rlen)shn_decrypt(&gRcv,pay,rlen);unsigned char rmac[4];rd_all(s,rmac,4);
     slog(@"resp cmd=0x%02x len=%d", rcmd, rlen);
-    slog(@"resp head=%@", hexd(pay, rlen<48?rlen:48));
     NSString*user=nil;
     if(rcmd==0xac){
         NSData*w=[NSData dataWithBytes:pay length:rlen]; NSData*u=psub(w,10); if(!u)u=psub(w,1);
@@ -442,14 +504,20 @@ static NSData* streamLoad(NSString*tid){
 // Volle Audio-Kette: Datei + AudioKey + CDN(voll) + Entschlüsseln -> entschlüsseltes Ogg (nil bei Fehler).
 // Läuft IMMER auf spotQ (Socket ist single-threaded).
 // Nur der SOCKET-Teil (Metadaten + AudioKey + CDN-Adresse). MUSS auf spotQ laufen (ein Socket).
+static NSArray*gLastCdns;   // alle CDN-Adressen der letzten Auflösung (Diagnose)
 // Liefert die CDN-URL + den 16-Byte-AES-Key. Der große Download passiert danach woanders.
 + (BOOL)resolveTrack:(NSString *)b62 cdn:(NSString **)cdnOut key:(NSData **)keyOut err:(NSString **)err {
     slog(@"resolve %@ (sock=%d)", b62, gSock);
-    if(gSock<0 && !reconnectStored()){ if(err)*err=@"not logged in"; return NO; }
-    if(!ensureApi(err)){ slog(@"resolve ensureApi fail"); return NO; }
+    CFAbsoluteTime T0=CFAbsoluteTimeGetCurrent(), T=T0; NSMutableArray*steps=[NSMutableArray array];   // Zeit pro Schritt (zeigt, wo es hängt)
+    #define STEP(name) do{ CFAbsoluteTime n_=CFAbsoluteTimeGetCurrent(); [steps addObject:[NSString stringWithFormat:@"%@ %.1fs",name,n_-T]]; T=n_; }while(0)
+    #define STEPLOG() slog(@"resolve steps %@: %@ (total %.1fs)", b62, [steps componentsJoinedByString:@", "], CFAbsoluteTimeGetCurrent()-T0)
+    if(gSock<0 && !reconnectStored()){ STEP(@"connect fail"); STEPLOG(); if(err)*err=@"not logged in"; return NO; }
+    STEP(@"connect");
+    if(!ensureApi(err)){ slog(@"resolve ensureApi fail"); STEP(@"api fail"); STEPLOG(); return NO; }
     unsigned char gidb[16]; base62ToGid(b62,gidb);
     NSData*meta=mercuryRC([NSString stringWithFormat:@"hm://metadata/4/track/%@",hexd(gidb,16)]);
-    if(!meta.length){ if(err)*err=@"No metadata"; return NO; }
+    STEP(@"metadata");
+    if(!meta.length){ STEPLOG(); if(err)*err=@"No metadata"; return NO; }
     // 3GS (600 MHz, Vorbis in Software): höchstens 160 kbit/s. Rang: 1=OGG_160 vor 0=OGG_96 vor 2=OGG_320 (nur als letzte Wahl).
     NSData*fileId=nil;int bestFmt=-1;unsigned char keyGid[16];memcpy(keyGid,gidb,16);
     for(NSData*af in psubs(meta,12)){int64_t fmt=pvarval(af,2);NSData*fid=psub(af,1);
@@ -458,7 +526,7 @@ static NSData* streamLoad(NSString*tid){
         for(NSData*af in psubs(alt,12)){int64_t fmt=pvarval(af,2);NSData*fid=psub(af,1);
             if(fid&&fmtRank(fmt)>bestFmt){bestFmt=fmtRank(fmt);fileId=fid;if(ag.length==16)memcpy(keyGid,ag.bytes,16);}}
         if(fileId)break;}}
-    if(!fileId){ if(err)*err=@"No playable file"; return NO; }
+    if(!fileId){ STEPLOG(); if(err)*err=@"No playable file"; return NO; }
 
     static uint32_t gAkSeq=0; uint32_t myseq=++gAkSeq;   // eindeutige Sequenz pro Key-Anfrage (seriell auf spotQ -> kein Race)
     NSMutableData*akr=[NSMutableData data];[akr appendData:fileId];[akr appendBytes:keyGid length:16];
@@ -471,16 +539,28 @@ static NSData* streamLoad(NSString*tid){
             memcpy(audiokey,(const unsigned char*)r.bytes+4,16);haveKey=1;break; }
         if(cmd==0x0e){ uint32_t rs=(r.length>=4)?ntohl(*(const uint32_t*)r.bytes):myseq;
             if(rs!=myseq){ continue; }
-            slog(@"AesKeyError");break; }}
-    if(!haveKey){ if(err)*err=@"no AudioKey"; return NO; }
+            const unsigned char*rb=r.bytes; NSInteger code=(r.length>=6)?((rb[4]<<8)|rb[5]):-1;
+            gKeyLastCode=code; gKeyRefusedRow++; gKeyRefusedTotal++;
+            slog(@"AesKeyError code %ld (account type %@, refused %ld in a row)",(long)code,gProductType?:@"?",(long)gKeyRefusedRow);
+            if(accountKeysRefused()) postOnce(@"MMSpotifyKeysRefused");
+            break; }}
+    STEP(@"key");
+    if(haveKey){ gKeyEverOK=YES; gKeyRefusedRow=0; }
+    if(!haveKey){ slog(@"no AudioKey for %@",b62); STEPLOG(); if(err)*err=@"no AudioKey"; return NO; }
 
     loadUserToken();
     NSString*srp=[NSString stringWithFormat:@"/storage-resolve/files/audio/interactive/%@",hexd(fileId.bytes,(int)fileId.length)];
     NSData*sr=spclientGet(srp);
     if(!sr){ if(refreshUserToken()) sr=spclientGet(srp); }
-    NSString*cdn=nil;
-    if(sr){ for(NSData*u in psubs(sr,2)){cdn=[[NSString alloc] initWithData:u encoding:NSUTF8StringEncoding];break;} }
-    if(!cdn.length){ if(err)*err=@"No CDN URL"; return NO; }
+    NSString*cdn=nil; NSMutableArray*all=[NSMutableArray array];
+    if(sr){ for(NSData*u in psubs(sr,2)){ NSString*x=[[NSString alloc] initWithData:u encoding:NSUTF8StringEncoding]; if(x.length)[all addObject:x]; } }
+    cdn=all.firstObject; gLastCdns=all;
+    { NSMutableArray*hosts=[NSMutableArray array]; for(NSString*x in all){ NSString*h=[NSURL URLWithString:x].host; if(h)[hosts addObject:h]; } slog(@"cdn hosts: %@",[hosts componentsJoinedByString:@" "]); }
+    STEP(@"cdn-url");
+    if(!cdn.length){ STEPLOG(); if(err)*err=@"No CDN URL"; return NO; }
+    STEPLOG();
+    #undef STEP
+    #undef STEPLOG
     if(cdnOut)*cdnOut=cdn; if(keyOut)*keyOut=[NSData dataWithBytes:audiokey length:16];
     slog(@"resolve ok fmt=%s cdn=%@", bestFmt==3?"ogg160":bestFmt==2?"ogg96":"ogg320", cdn);
     return YES;
@@ -488,7 +568,9 @@ static NSData* streamLoad(NSString*tid){
 
 // Großer CDN-Download + AES-CTR-Entschlüsselung. Braucht KEINEN Socket -> darf abseits der spotQ laufen.
 + (NSData *)downloadDecrypt:(NSString *)cdn key:(NSData *)keyData err:(NSString **)err {
-    NSError*ne=nil; NSData*enc=[NSData dataWithContentsOfURL:[NSURL URLWithString:cdn] options:0 error:&ne];
+    NSError*ne=nil; CFAbsoluteTime t0=CFAbsoluteTimeGetCurrent();
+    NSData*enc=[NSData dataWithContentsOfURL:[NSURL URLWithString:cdn] options:0 error:&ne];
+    slog(@"cdn download %@: %.1f MB in %.1fs%@",[NSURL URLWithString:cdn].host,enc.length/1048576.0,CFAbsoluteTimeGetCurrent()-t0,ne?[@" error: " stringByAppendingString:ne.localizedDescription]:@"");
     if(!enc.length){ if(err)*err=[NSString stringWithFormat:@"CDN download failed (%@)",ne.localizedDescription?:@"empty"]; return nil; }
     NSMutableData*out=[NSMutableData dataWithLength:enc.length];size_t moved=0;CCCryptorRef cr;
     CCCryptorCreateWithMode(kCCDecrypt,kCCModeCTR,kCCAlgorithmAES,ccNoPadding,AUDIO_IV,keyData.bytes,16,NULL,0,0,kCCModeOptionCTR_BE,&cr);
@@ -524,6 +606,7 @@ static NSData* streamLoad(NSString*tid){
 
 // ---- Offline: Tracks herunterladen / Status ----
 + (BOOL)isDownloaded:(NSString *)trackId { return diskHas(trackId); }
++ (BOOL)playableOffline:(NSString *)trackId { return trackId.length && (diskHas(trackId) || streamHas(trackId) || cacheGet(trackId)); }
 + (BOOL)allDownloaded:(NSArray *)trackIds {
     if(!trackIds.count) return NO;
     for(NSString*t in trackIds) if(!diskHas(t)) return NO;
@@ -542,7 +625,7 @@ static void dlBgBegin(void){ dispatch_async(dispatch_get_main_queue(), ^{ if(gDl
 static void dlBgEnd(void){ dispatch_async(dispatch_get_main_queue(), ^{ if(gDlBg!=UIBackgroundTaskInvalid){ [[UIApplication sharedApplication] endBackgroundTask:gDlBg]; gDlBg=UIBackgroundTaskInvalid; } }); }
 static dispatch_queue_t dlDataQ(void){ static dispatch_queue_t q; static dispatch_once_t o; dispatch_once(&o,^{ q=dispatch_queue_create("mesh.dl.data",DISPATCH_QUEUE_SERIAL); }); return q; }
 
-static NSString *offlinePath(void); static NSArray* spTracks(NSArray*ids);   // weiter unten definiert
+static NSString *offlinePath(void); static NSArray* spTracks(NSArray*ids); static void dlinfoRemember(NSArray*ids);   // weiter unten definiert
 + (NSDictionary *)downloadStatus {
     @synchronized([MMSpotify class]){
         NSArray*q=gDlQueue?[gDlQueue copy]:@[]; NSInteger left=(NSInteger)q.count;
@@ -631,7 +714,7 @@ static NSString *offlinePath(void); static NSArray* spTracks(NSArray*ids);   // 
             if(diskHas(tid)){ [MMSpotify dlFinishTrack:tid]; return; }
             __block BOOL moved=NO;   // schon im Song-Cache -> nur verschieben, nicht neu laden
             dispatch_sync(streamQ(), ^{ moved=streamHas(tid) && rename(streamPath(tid).fileSystemRepresentation, diskPath(tid).fileSystemRepresentation)==0; });
-            if(moved){ slog(@"dl %@ aus dem Song-Cache übernommen",tid); [MMSpotify dlFinishTrack:tid]; return; }
+            if(moved){ slog(@"dl %@ aus dem Song-Cache übernommen",tid); dlinfoRemember(@[tid]); [MMSpotify dlFinishTrack:tid]; return; }
             if([MMSpotify freeDiskBytes] < 80*1024*1024) dispatch_sync(streamQ(), ^{ streamTrim(0,nil); });   // Song-Cache für Downloads freigeben
             if([MMSpotify freeDiskBytes] < 80*1024*1024){   // Platte voll -> abbrechen
                 @synchronized([MMSpotify class]){ [gDlQueue removeAllObjects]; gDlRunning=NO; gDlDone=0; gDlTotal=0; [gDlSeen removeAllObjects]; }
@@ -646,10 +729,11 @@ static NSString *offlinePath(void); static NSArray* spTracks(NSArray*ids);   // 
                 BOOL keyIssue = (e && [e rangeOfString:@"AudioKey"].location!=NSNotFound) || (e && [e rangeOfString:@"logged in"].location!=NSNotFound);
                 if(keyIssue){
                     // Spotify-Rate-Limit: NICHT überspringen, sondern denselben Track mit Backoff erneut.
-                    if(gDlFails>=12){   // trotz Backoff/Reconnect dauerhaft -> sauber stoppen
+                    // Verweigert Spotify dem Konto die Schlüssel ganz (neue Konten), hilft kein Wiederholen -> sofort stoppen
+                    if(gDlFails>=12 || accountKeysRefused()){   // trotz Backoff/Reconnect dauerhaft -> sauber stoppen
                         if(gSock>=0){ close(gSock); gSock=-1; }
                         @synchronized([MMSpotify class]){ [gDlQueue removeAllObjects]; gDlRunning=NO; gDlDone=0; gDlTotal=0; [gDlSeen removeAllObjects]; }
-                        gDlFails=0; slog(@"dl ABBRUCH nach 12 Key-Fehlern");
+                        gDlFails=0; slog(@"dl ABBRUCH: %@",accountKeysRefused()?@"Spotify verweigert diesem Konto die Schlüssel":@"12 Key-Fehler");
                         dispatch_async(dispatch_get_main_queue(), ^{ [[NSNotificationCenter defaultCenter] postNotificationName:@"MMDownloadError" object:nil userInfo:nil]; });
                         dlBgEnd();
                         return;
@@ -665,7 +749,7 @@ static NSString *offlinePath(void); static NSArray* spTracks(NSArray*ids);   // 
             dispatch_async(dlDataQ(), ^{   // großer Download OHNE spotQ zu blockieren
                 @autoreleasepool {
                     NSString*e2=nil; NSData*d=[MMSpotify downloadDecrypt:cdn key:key err:&e2];
-                    if(d.length) [d writeToFile:diskPath(tid) atomically:YES];
+                    if(d.length){ [d writeToFile:diskPath(tid) atomically:YES]; dlinfoRemember(@[tid]); }
                     [MMSpotify dlFinishTrack:tid];
                 }
             });
@@ -751,6 +835,65 @@ static NSString *offlinePath(void){ return [diskDir() stringByAppendingPathCompo
     });
 }
 
+// Verbindungstest für "Debug info": jeder Schritt mit Zeitlimit, Ergebnis Zeile für Zeile (auf dem Main-Thread)
++ (void)runConnectionTest:(void(^)(NSString *line))line done:(void(^)(void))done {
+    void(^out)(NSString*)=^(NSString*l){ slog(@"test: %@",l); dispatch_async(dispatch_get_main_queue(), ^{ line(l); }); };
+    dispatch_async(dispatch_get_global_queue(0,0), ^{ @autoreleasepool {
+        out([self networkReachable]?@"Network: online":@"Network: OFFLINE");
+        // 1. Spotify-Serverliste über HTTPS (eigenes TLS)
+        CFAbsoluteTime t0=CFAbsoluteTimeGetCurrent(); int st=0;
+        NSData*ad=httpsReq(@"GET",@"apresolve.spotify.com",@"/?type=accesspoint",@[],nil,&st);
+        NSArray*aps=ad?[NSJSONSerialization JSONObjectWithData:ad options:0 error:NULL][@"accesspoint"]:nil;
+        out([NSString stringWithFormat:@"Server list (HTTPS): %@ (%.1fs)",aps.count?[NSString stringWithFormat:@"%lu servers",(unsigned long)aps.count]:[NSString stringWithFormat:@"FAILED, HTTP %d",st],CFAbsoluteTimeGetCurrent()-t0]);
+        // 2. jeden Spotify-Server direkt verbinden (das ist der Weg für Songs und Downloads)
+        NSUInteger okc=0;
+        for(NSString*ap in [aps subarrayWithRange:NSMakeRange(0,MIN((NSUInteger)6,aps.count))]){
+            NSArray*hp=[ap componentsSeparatedByString:@":"]; if(hp.count<2) continue;
+            t0=CFAbsoluteTimeGetCurrent(); struct hostent*he=gethostbyname([hp[0] UTF8String]);
+            if(!he){ out([NSString stringWithFormat:@"%@: DNS failed",ap]); continue; }
+            struct sockaddr_in sa; memset(&sa,0,sizeof sa); sa.sin_family=AF_INET; sa.sin_port=htons([hp[1] intValue]); memcpy(&sa.sin_addr,he->h_addr,he->h_length);
+            NSString*why=nil; int t=tcpConnect(&sa,&why); if(t>=0){ close(t); okc++; }
+            out([NSString stringWithFormat:@"%@: %@ (%.1fs)",ap,t>=0?@"ok":[why uppercaseString],CFAbsoluteTimeGetCurrent()-t0]);
+        }
+        if(aps.count && !okc) out(@"=> Spotify's ports seem BLOCKED on this network");
+        // 3. Song über die Spotify-Verbindung auflösen (Metadaten + Schlüssel + Download-Adresse), höchstens 45 s
+        __block NSString*cdn=nil, *e=nil; __block BOOL ok=NO; dispatch_semaphore_t sem=dispatch_semaphore_create(0); t0=CFAbsoluteTimeGetCurrent();
+        dispatch_async(spotQ(), ^{ NSString*c=nil, *er=nil; NSData*k=nil; ok=[self resolveTrack:@"0DiWol3AO6WpXZgp0goxAV" cdn:&c key:&k err:&er]; cdn=c; e=er; dispatch_semaphore_signal(sem); });
+        if(dispatch_semaphore_wait(sem,dispatch_time(DISPATCH_TIME_NOW,45*NSEC_PER_SEC))){ out(@"Song lookup: NO ANSWER after 45s (Spotify connection stuck)"); }
+        else out([NSString stringWithFormat:@"Song lookup + key: %@ (%.1fs)",ok?@"ok":[NSString stringWithFormat:@"FAILED: %@",e?:@"?"],CFAbsoluteTimeGetCurrent()-t0]);
+        out([NSString stringWithFormat:@"Account: %@ · Country: %@",gProductType?:@"unknown",gCountry?:@"?"]);
+        // 4. Song-Datei vom Download-Server laden (iOS-Netz, wie beim Abspielen)
+        if(ok && cdn.length){
+            NSURL*u=[NSURL URLWithString:cdn]; NSError*ne=nil; t0=CFAbsoluteTimeGetCurrent();
+            NSData*d=[NSData dataWithContentsOfURL:u options:0 error:&ne];
+            out([NSString stringWithFormat:@"Download %@: %@ (%.1fs)",u.host,d.length?[NSString stringWithFormat:@"%.1f MB ok",d.length/1048576.0]:[NSString stringWithFormat:@"FAILED %@",ne.localizedDescription?:@""],CFAbsoluteTimeGetCurrent()-t0]);
+        }
+        out(@"Test finished.");
+        dispatch_async(dispatch_get_main_queue(), ^{ if(done) done(); });
+    }});
+}
++ (NSString *)productType { return gProductType; }
++ (NSString *)keyStatus {
+    if(gKeyEverOK) return gKeyRefusedTotal?[NSString stringWithFormat:@"ok (%ld refused, last code %ld)",(long)gKeyRefusedTotal,(long)gKeyLastCode]:@"ok";
+    if(gKeyRefusedTotal) return [NSString stringWithFormat:@"REFUSED %ld times, code %ld",(long)gKeyRefusedTotal,(long)gKeyLastCode];
+    return @"not tried yet";
+}
++ (NSString *)country { return gCountry; }
+// Für "Fehlerinfos": nur die aussagekräftigen Zeilen, Download-Adressen ohne Schlüssel
++ (NSString *)diagnosticLog {
+    NSString*all=[NSString stringWithContentsOfFile:MMPath(@".spotify-log") encoding:NSUTF8StringEncoding error:NULL]?:@"";   // Datei wird bei jeder Zeile neu geschrieben
+    NSArray*keys=@[@"=== login",@"apresolve",@"ap ",@"handshake",@"no reply",@"Login",@"AuthFailure",@"reconnect",@"account type",@"country",@"resolve",@"AesKeyError",@"AudioKey",@"cdn",@"CDN",@"playTrack",@"fail",@"timeout",@"Unexpected",@"not reachable",@"dl ",@"test:"];
+    NSMutableArray*out=[NSMutableArray array];
+    NSRegularExpression*url=[NSRegularExpression regularExpressionWithPattern:@"(https?://[^/\\s]+)\\S*" options:0 error:NULL];
+    for(NSString*l in [all componentsSeparatedByString:@"\n"]){
+        if(!l.length || [l hasPrefix:@"resp head"]) continue;
+        BOOL hit=NO; for(NSString*k in keys) if([l rangeOfString:k].location!=NSNotFound){ hit=YES; break; }
+        if(hit) [out addObject:[url stringByReplacingMatchesInString:l options:0 range:NSMakeRange(0,l.length) withTemplate:@"$1/…"]];
+    }
+    if(out.count>70) [out removeObjectsInRange:NSMakeRange(0,out.count-70)];
+    return [out componentsJoinedByString:@"\n"];
+}
++ (NSString *)deviceModel { char b[64]={0}; size_t n=sizeof b; sysctlbyname("hw.machine",b,&n,NULL,0); return [NSString stringWithUTF8String:b]; }
 + (BOOL)isLoading { return gLoading; }
 
 // ---- mbedTLS-HTTPS (iOS-6-TLS zu accounts/api.spotify.com ist zu alt -> selber TLS 1.2) ----
@@ -1032,41 +1175,68 @@ static NSArray* spLikedIds(int*st){
 static NSDictionary* trackPage(NSArray*ids,NSUInteger off,NSUInteger lim,NSUInteger total,NSString*nextBase){
     NSArray*slice=(off<ids.count)?[ids subarrayWithRange:NSMakeRange(off,MIN(lim,ids.count-off))]:@[];
     NSMutableArray*items=[NSMutableArray array]; for(NSDictionary*t in spTracks(slice)) [items addObject:@{@"track":t}];
+    if(slice.count && !items.count) return nil;   // Titelinfos nicht ladbar (z.B. offline): Fehler statt leerer Seite, sonst überschreibt "leer" die gespeicherte Liste
     id next=(off+lim<total)?[NSString stringWithFormat:@"%@offset=%lu",nextBase,(unsigned long)(off+lim)]:[NSNull null];
     return @{@"items":items,@"next":next,@"total":@(total)};
 }
 // "Heruntergeladen": alle Songs auf der Platte als eine Liste, neueste zuerst.
 // Titel/Artist/Cover/Dauer kommen aus dlinfo.plist; was dort fehlt, aus den gespeicherten Listen oder übers Netz.
 // Was einmal bekannt ist, bleibt in dlinfo.plist -> die Liste geht auch offline vollständig.
+// Platzhalter für Songs ohne bekannte Infos; landet auch in gespeicherten Listen und darf nie als echter Titel übernommen werden
+#define DL_PLACEHOLDER @"…"
+static BOOL realTitle(id t){ return [t isKindOfClass:[NSString class]] && [t length] && ![t isEqualToString:DL_PLACEHOLDER]; }
+// dlinfo.plist: Titel/Artist/Cover/Dauer der heruntergeladenen Songs (für die Liste "Heruntergeladen", auch offline)
+static NSString* dlinfoPath(void){ return [diskDir() stringByAppendingPathComponent:@"dlinfo.plist"]; }
+static NSObject* dlinfoLock(void){ static NSObject*o; static dispatch_once_t t; dispatch_once(&t,^{ o=[NSObject new]; }); return o; }
+static void dlinfoMerge(NSDictionary*add){
+    if(!add.count) return;
+    @synchronized(dlinfoLock()){
+        NSMutableDictionary*info=[[NSDictionary dictionaryWithContentsOfFile:dlinfoPath()] mutableCopy]?:[NSMutableDictionary dictionary];
+        for(NSString*k in add) if(realTitle(add[k][@"title"])) info[k]=add[k];
+        [info writeToFile:dlinfoPath() atomically:YES];
+    }
+    for(NSDictionary*i in add.allValues) if([i[@"cover"] length] && ![MMCovers onDisk:i[@"cover"]]) [MMCovers prefetch:i[@"cover"]];   // Cover auch offline
+}
+static NSDictionary* infoFromTrack(NSDictionary*t){
+    NSArray*ar=t[@"artists"], *im=t[@"album"][@"images"];
+    return @{@"title":t[@"name"]?:@"",@"artist":ar.count?(ar[0][@"name"]?:@""):@"",@"cover":im.count?(im[0][@"url"]?:@""):@"",@"dur":t[@"duration_ms"]?:@0};
+}
+// nach einem fertigen Download: Infos im Hintergrund holen und merken (wir sind gerade online)
+static void dlinfoRemember(NSArray*ids){
+    dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW,0), ^{ @autoreleasepool {
+        NSMutableDictionary*add=[NSMutableDictionary dictionary];
+        for(NSDictionary*t in spTracks(ids)) if([t[@"id"] isKindOfClass:[NSString class]]) add[t[@"id"]]=infoFromTrack(t);
+        dlinfoMerge(add);
+    }});
+}
 static NSDictionary* spDownloads(int*st){
     NSArray*files=[MMSpotify downloadedTracks];
-    NSString*ip=[diskDir() stringByAppendingPathComponent:@"dlinfo.plist"];
-    NSMutableDictionary*info=[[NSDictionary dictionaryWithContentsOfFile:ip] mutableCopy]?:[NSMutableDictionary dictionary];
-    NSMutableSet*miss=[NSMutableSet set]; for(NSDictionary*f in files) if(!info[f[@"id"]]) [miss addObject:f[@"id"]];
-    BOOL changed=NO;
+    NSMutableDictionary*info; @synchronized(dlinfoLock()){ info=[[NSDictionary dictionaryWithContentsOfFile:dlinfoPath()] mutableCopy]?:[NSMutableDictionary dictionary]; }
+    NSMutableDictionary*add=[NSMutableDictionary dictionary];
+    NSMutableSet*miss=[NSMutableSet set];
+    for(NSDictionary*f in files) if(!realTitle(info[f[@"id"]][@"title"])){ [info removeObjectForKey:f[@"id"]]; [miss addObject:f[@"id"]]; }   // auch alte "…"-Einträge neu holen
     if(miss.count){   // 1. aus den Listen, die die App schon gespeichert hat
         for(NSString*fn in [[NSFileManager defaultManager] contentsOfDirectoryAtPath:diskDir() error:NULL]){
             if(![fn hasPrefix:@"list_"] || ![fn hasSuffix:@".plist"]) continue;
             for(NSDictionary*t in [NSArray arrayWithContentsOfFile:[diskDir() stringByAppendingPathComponent:fn]]){
-                if(![t isKindOfClass:[NSDictionary class]] || ![miss containsObject:t[@"id"]] || ![t[@"title"] length]) continue;
-                info[t[@"id"]]=@{@"title":t[@"title"],@"artist":t[@"artist"]?:@"",@"cover":t[@"cover"]?:@"",@"dur":t[@"dur"]?:@0};
-                [miss removeObject:t[@"id"]]; changed=YES;
+                if(![t isKindOfClass:[NSDictionary class]] || ![miss containsObject:t[@"id"]] || !realTitle(t[@"title"])) continue;   // z.B. die gespeicherte "Heruntergeladen"-Liste selbst
+                add[t[@"id"]]=@{@"title":t[@"title"],@"artist":t[@"artist"]?:@"",@"cover":t[@"cover"]?:@"",@"dur":t[@"dur"]?:@0};
+                [miss removeObject:t[@"id"]];
             }
         }
     }
     if(miss.count && [MMSpotify networkReachable]){   // 2. der Rest übers Netz
         NSArray*ids=[miss allObjects];
-        for(NSUInteger i=0;i<ids.count;i+=50) for(NSDictionary*t in spTracks([ids subarrayWithRange:NSMakeRange(i,MIN(50,ids.count-i))])){
-            NSArray*ar=t[@"artists"], *im=t[@"album"][@"images"];
-            info[t[@"id"]]=@{@"title":t[@"name"]?:@"",@"artist":ar.count?(ar[0][@"name"]?:@""):@"",@"cover":im.count?(im[0][@"url"]?:@""):@"",@"dur":t[@"duration_ms"]?:@0};
-            changed=YES;
-        }
+        for(NSUInteger i=0;i<ids.count;i+=50) for(NSDictionary*t in spTracks([ids subarrayWithRange:NSMakeRange(i,MIN(50,ids.count-i))]))
+            if([t[@"id"] isKindOfClass:[NSString class]]) add[t[@"id"]]=infoFromTrack(t);
     }
-    if(changed) [info writeToFile:ip atomically:YES];
+    [info addEntriesFromDictionary:add]; dlinfoMerge(add);
+    if([MMSpotify networkReachable])   // Cover, die noch nicht auf der Platte liegen, nachholen (für offline)
+        for(NSDictionary*f in files){ NSString*cu=info[f[@"id"]][@"cover"]; if(cu.length && ![MMCovers onDisk:cu]) [MMCovers prefetch:cu]; }
     NSMutableArray*items=[NSMutableArray array];
     for(NSDictionary*f in files){
         NSDictionary*i=info[f[@"id"]]; NSString*cov=i[@"cover"];
-        [items addObject:@{@"track":@{@"id":f[@"id"],@"name":[i[@"title"] length]?i[@"title"]:@"…",@"artists":@[@{@"name":i[@"artist"]?:@""}],
+        [items addObject:@{@"track":@{@"id":f[@"id"],@"name":realTitle(i[@"title"])?i[@"title"]:DL_PLACEHOLDER,@"artists":@[@{@"name":i[@"artist"]?:@""}],
                                       @"album":@{@"images":[cov length]?@[@{@"url":cov}]:@[]},@"duration_ms":i[@"dur"]?:@0}}];
     }
     *st=200; return @{@"items":items,@"next":[NSNull null],@"total":@(items.count)};
@@ -1109,7 +1279,7 @@ static NSDictionary* spInternalGet(NSString*path,int*st,BOOL*handled){
         NSMutableArray*ids=[NSMutableArray array];
         for(NSDictionary*it in j[@"contents"][@"items"]){ NSString*tid=[it isKindOfClass:[NSDictionary class]]?trackIdFromUri(it[@"uri"]):nil; if(tid)[ids addObject:tid]; }
         NSUInteger total=[j[@"length"] unsignedIntegerValue];
-        NSDictionary*pg=trackPage(ids,0,ids.count,ids.count,@"");
+        NSDictionary*pg=trackPage(ids,0,ids.count,ids.count,@""); if(!pg){ *st=503; return nil; }
         id next=(off+lim<total)?[NSString stringWithFormat:@"playlists/%@?offset=%lu",pid,(unsigned long)(off+lim)]:[NSNull null];
         // Kopf für die Cover-Ansicht: Name, Bild, Beschreibung, Besitzer
         NSDictionary*a=[j[@"attributes"] isKindOfClass:[NSDictionary class]]?j[@"attributes"]:@{};
@@ -1123,7 +1293,7 @@ static NSDictionary* spInternalGet(NSString*path,int*st,BOOL*handled){
     }
     if([path hasPrefix:@"me/tracks"]){
         NSArray*ids=spLikedIds(st); if(!ids) return nil;
-        return trackPage(ids,off,lim,ids.count,@"me/tracks?");
+        NSDictionary*pg=trackPage(ids,off,lim,ids.count,@"me/tracks?"); if(!pg) *st=503; return pg;
     }
     if([path hasPrefix:@"me/player/recently-played"]){
         NSDictionary*j=spJSON([NSString stringWithFormat:@"/recently-played/v3/user/%@/recently-played?format=json&limit=%lu&filter=default",user,(unsigned long)lim],st);
@@ -1131,7 +1301,7 @@ static NSDictionary* spInternalGet(NSString*path,int*st,BOOL*handled){
         NSMutableArray*ids=[NSMutableArray array];
         NSMutableDictionary*at=[NSMutableDictionary dictionary];
         for(NSDictionary*c in j[@"playContexts"]){ NSString*tid=[c isKindOfClass:[NSDictionary class]]?trackIdFromUri(c[@"lastPlayedTrackUri"]):nil; if(tid&&![ids containsObject:tid]){ [ids addObject:tid]; if(c[@"lastPlayedTime"]) at[tid]=c[@"lastPlayedTime"]; } }
-        NSMutableDictionary*pg=[trackPage(ids,0,ids.count,ids.count,@"") mutableCopy]; NSMutableArray*its=[NSMutableArray array];
+        NSMutableDictionary*pg=[trackPage(ids,0,ids.count,ids.count,@"") mutableCopy]; if(!pg){ *st=503; return nil; } NSMutableArray*its=[NSMutableArray array];
         for(NSDictionary*it in pg[@"items"]){ NSMutableDictionary*m=[it mutableCopy]; id a=at[it[@"track"][@"id"]]; if(a) m[@"at"]=a; [its addObject:m]; }   // Zeitpunkt (ms)
         pg[@"items"]=its; return pg;
     }
@@ -1142,7 +1312,7 @@ static NSDictionary* spInternalGet(NSString*path,int*st,BOOL*handled){
         NSMutableArray*ids=[NSMutableArray array];
         for(NSData*disc in psubs(al,11)) for(NSData*t in psubs(disc,3)){ NSString*tid=gidToBase62(psub(t,1)); if(tid)[ids addObject:tid]; }
         NSMutableDictionary*d=[albumDict(alid,al) mutableCopy];
-        NSDictionary*pg=trackPage(ids,0,ids.count,ids.count,@"");
+        NSDictionary*pg=trackPage(ids,0,ids.count,ids.count,@""); if(!pg){ *st=503; return nil; }
         d[@"tracks"]=@{@"items":pg[@"items"],@"next":[NSNull null],@"total":@(ids.count)};
         *st=200; return d;
     }
@@ -1441,6 +1611,33 @@ static void reachChanged(SCNetworkReachabilityRef r,SCNetworkReachabilityFlags f
 }
 
 #ifdef DEBUG
+// Diagnose: Song auflösen und jede CDN-Adresse einmal mit iOS-6-Netz (CFNetwork) und einmal mit eigenem TLS (mbedTLS) laden
+// Diagnose: drei verweigerte Schlüssel vortäuschen (Popup + "Debug info" prüfen, ohne betroffenes Konto)
++ (void)debugFakeKeyRefusals { gKeyEverOK=NO; gKeyRefusedRow=3; gKeyRefusedTotal+=3; gKeyLastCode=1; slog(@"AesKeyError code 1 (simulated x3)"); if(accountKeysRefused()) postOnce(@"MMSpotifyKeysRefused"); }
+// Diagnose: Verbindung zu ip:port mit dem Zeitlimit der Spotify-Verbindung (z.B. eine Adresse, die nie antwortet)
++ (void)debugApTest:(NSString *)ipport {
+    dispatch_async(dispatch_get_global_queue(0,0), ^{
+        NSArray*hp=[ipport componentsSeparatedByString:@":"]; if(hp.count<2) return;
+        struct sockaddr_in sa; memset(&sa,0,sizeof sa); sa.sin_family=AF_INET; sa.sin_port=htons([hp[1] intValue]); inet_aton([hp[0] UTF8String],&sa.sin_addr);
+        NSString*why=nil; CFAbsoluteTime t0=CFAbsoluteTimeGetCurrent(); int t=tcpConnect(&sa,&why);
+        slog(@"aptest %@ -> %@ after %.1fs",ipport,t>=0?@"ok":why,CFAbsoluteTimeGetCurrent()-t0); if(t>=0) close(t);
+    });
+}
++ (void)debugCdnTest:(NSString *)tid {
+    dispatch_async(spotQ(), ^{ @autoreleasepool {
+        NSString*cdn=nil; NSData*key=nil; NSString*e=nil;
+        if(![self resolveTrack:tid cdn:&cdn key:&key err:&e]){ slog(@"cdntest resolve fail: %@",e); return; }
+        for(NSString*u in gLastCdns){
+            NSURL*url=[NSURL URLWithString:u]; NSError*ne=nil; CFAbsoluteTime t0=CFAbsoluteTimeGetCurrent();
+            NSData*d1=[NSData dataWithContentsOfURL:url options:0 error:&ne];
+            slog(@"cdntest CFNetwork %@ -> %lu B in %.1fs %@",url.host,(unsigned long)d1.length,CFAbsoluteTimeGetCurrent()-t0,ne?ne.localizedDescription:@"");
+            int st=0; t0=CFAbsoluteTimeGetCurrent(); NSString*pq=url.query.length?[NSString stringWithFormat:@"%@?%@",url.path,url.query]:url.path;
+            NSData*d2=httpsReq(@"GET",url.host,pq,@[],nil,&st);
+            slog(@"cdntest mbedTLS %@ -> HTTP %d %lu B in %.1fs",url.host,st,(unsigned long)d2.length,CFAbsoluteTimeGetCurrent()-t0);
+        }
+    }});
+}
+
 // MMDebug: roher extended-metadata-Payload (zum Prüfen der Protobuf-Feldnummern auf dem Gerät)
 + (NSData *)debugExt:(NSString *)uri kind:(int)kind { int st=0; return spExt(@[uri],kind,&st)[uri]; }
 + (NSData *)debugRaw:(NSString *)path { int st=0; return spReq(@"GET",path,nil,nil,@"application/json",&st); }

@@ -24,6 +24,8 @@
     UIActivityIndicatorView *_spin;
     // Cover-Ansicht (Einstellung): großes Cover + Name + Artist/Beschreibung + Infozeile, Titel nummeriert
     BOOL _coverStyle;
+    BOOL _fromPart;         // gezeigte Liste ist eine gespeicherte Teilliste (nicht alle Seiten)
+    BOOL _offline;          // ohne Netz: nicht spielbare Songs grau, Antippen nur bei spielbaren
     NSDictionary *_meta;       // Kopf-Daten der ersten Seite: name, images, artists, release_date, description, owner
     NSUInteger _total;         // Titel insgesamt laut Spotify
     UIImageView *_hCover; UILabel *_hTitle, *_hSub, *_hInfo;
@@ -75,6 +77,7 @@
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(dlRefresh) name:@"MMDownloadDone" object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(dlRefresh) name:@"MMDownloadsChanged" object:nil];
     for(NSString*n in @[@"MMDownloadFull",@"MMDownloadError"]) [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(dlStopped) name:n object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(netChanged) name:@"MMNetworkChanged" object:nil];
     [self load];
 }
 
@@ -120,7 +123,8 @@ static NSString* fmtDuration(long long ms){
     NSString*kind=[parts componentsJoinedByString:@" · "], *cnt=nil;
     NSUInteger n=_total?:_tracks.count;
     if(n){ cnt=(n==1)?L(@"1 song"):[NSString stringWithFormat:L(@"%lu songs"),(unsigned long)n];
-        long long ms=0; BOOL all=(!_nextPath && _tracks.count); for(NSDictionary*t in _tracks) ms+=[t[@"dur"] longLongValue];
+        // gespeicherte Teilliste: keine falsche Gesamtdauer
+        long long ms=0; BOOL all=(!_nextPath && _tracks.count && !_fromPart); for(NSDictionary*t in _tracks) ms+=[t[@"dur"] longLongValue];
         if(all && ms>0) cnt=[cnt stringByAppendingFormat:@", %@",fmtDuration(ms)]; }
     // Eine Zeile, wenn alles passt; sonst Anzahl + Dauer komplett in die zweite Zeile (nie mitten drin umbrechen)
     NSString*one=cnt?[NSString stringWithFormat:@"%@ · %@",kind,cnt]:kind;
@@ -151,13 +155,21 @@ static NSString* fmtDuration(long long ms){
     if(hs){ _hSub.frame=CGRectMake(x,y,tw,hs); y+=hs+g2; }
     if(hi) _hInfo.frame=CGRectMake(x,y,tw,hi);
 }
+- (void)netChanged { BOOL o=![MMSpotify networkReachable]; if(o!=_offline){ _offline=o; [_table reloadData]; } }
+// Teilliste (noch nicht alle Seiten geladen): eigene Datei, damit die Bibliothek sie nicht für vollständig hält
+- (NSString *)partPath { return [[self listPath] stringByAppendingString:@".part"]; }
+- (NSArray *)cachedList {
+    NSArray*full=[NSArray arrayWithContentsOfFile:[self listPath]]; _fromPart=!full;
+    return full?:[NSArray arrayWithContentsOfFile:[self partPath]];
+}
 - (NSString *)metaPath { return [[self listPath] stringByAppendingString:@".meta"]; }
 
 - (NSString *)listPath { return [NSString stringWithFormat:@"%@/.spotcache/list_%lu.plist",MMDataDir(), (unsigned long)_path.hash]; }
 
 - (void)load {
     _tracks=[NSMutableArray array];
-    NSArray*cached=[NSArray arrayWithContentsOfFile:[self listPath]];   // zuletzt komplett geladene Liste sofort zeigen
+    _offline=![MMSpotify networkReachable];
+    NSArray*cached=[self cachedList];   // zuletzt geladene Liste (komplett oder bis wohin gescrollt) sofort zeigen
     NSDictionary*cm=[NSDictionary dictionaryWithContentsOfFile:[self metaPath]]; if(cm){ _meta=cm[@"meta"]; _total=[cm[@"total"] unsignedIntegerValue]; }
     if(cached.count){ _tracks=[cached mutableCopy]; _allIds=[cached valueForKey:@"id"]; _showingCache=YES;
         [_spin stopAnimating]; _hint.hidden=YES; [self updateDlState]; [_table reloadData]; }
@@ -206,7 +218,7 @@ static NSString* fmtDuration(long long ms){
             _loadingPage=NO; _firstDone=YES; [_spin stopAnimating];
             if(_showingCache){ _showingCache=NO; _nextPath=nil; return; }   // offline -> gespeicherte Liste bleibt stehen
             if(!_tracks.count){
-                NSArray*cached=[NSArray arrayWithContentsOfFile:[self listPath]];   // Offline-Fallback
+                NSArray*cached=[self cachedList];   // Offline-Fallback
                 if(cached.count){ _tracks=[cached mutableCopy]; _nextPath=nil; _hint.hidden=YES; [self updateDlState]; [_table reloadData]; return; }
                 _hint.text=(st==401)?L(@"Session expired."):L(@"Couldn't load (offline?).");
             }
@@ -222,14 +234,16 @@ static NSString* fmtDuration(long long ms){
             if(total==_tracks.count && [head isEqualToArray:fresh]){ _firstDone=YES; _nextPath=nil; _loadingPage=NO; return; }
             _tracks=[NSMutableArray array]; _allIds=nil;   // geändert -> frisch aufbauen
         }
-        [_tracks addObjectsFromArray:fresh];
+        [_tracks addObjectsFromArray:fresh]; _fromPart=NO;
         // next-URL -> relativer Pfad merken
         id next=page[@"next"]; _nextPath=nil;
         if([next isKindOfClass:[NSString class]] && [next length]){ NSRange r=[next rangeOfString:@"/v1/"]; _nextPath=(r.location!=NSNotFound)?[next substringFromIndex:r.location+4]:next; }
         _firstDone=YES; _loadingPage=NO; [_spin stopAnimating];
         _hint.hidden=(_tracks.count>0); if(!_tracks.count)_hint.text=L(@"Empty.");
-        // komplette Liste erst cachen wenn alle Seiten da sind
-        if(!_nextPath && _tracks.count){ [[NSFileManager defaultManager] createDirectoryAtPath:MMPath(@".spotcache") withIntermediateDirectories:YES attributes:nil error:NULL]; [_tracks writeToFile:[self listPath] atomically:YES]; _allIds=[_tracks valueForKey:@"id"]; }
+        // Liste merken (für offline): komplett, sobald alle Seiten da sind, sonst als Teilliste
+        if(_tracks.count){ [[NSFileManager defaultManager] createDirectoryAtPath:MMPath(@".spotcache") withIntermediateDirectories:YES attributes:nil error:NULL];
+            if(!_nextPath){ [_tracks writeToFile:[self listPath] atomically:YES]; [[NSFileManager defaultManager] removeItemAtPath:[self partPath] error:NULL]; _allIds=[_tracks valueForKey:@"id"]; }
+            else [_tracks writeToFile:[self partPath] atomically:YES]; }
         [self updateDlState]; [_table reloadData]; [self updateHeader];
     }];
 }
@@ -262,9 +276,9 @@ static UIImage* offIcon(BOOL have, UIColor*grn){
 - (BOOL)isDownloads { return [_path hasPrefix:@"me/downloads"]; }
 // Zufallswiedergabe der heruntergeladenen Songs: zufälliger Start, Rest gemischt
 - (void)shufflePlay {
-    if(!_tracks.count) return;
+    NSArray*list=[self playableTracks]; if(!list.count) return;
     MMRootController*r=[MMRootController shared]; [r setShuffle:YES];
-    [r playList:_tracks index:(NSInteger)arc4random_uniform((u_int32_t)_tracks.count) context:[self context]];
+    [r playList:list index:(NSInteger)arc4random_uniform((u_int32_t)list.count) context:[self context]];
 }
 - (void)updateDlState {
     if([self isDownloads]){ _offBtn.hidden=!_tracks.count; [_offSpin stopAnimating]; return; }
@@ -347,10 +361,19 @@ enum { kAlertRemove=1, kAlertSave=2 };
     if(_coverStyle) ((UILabel*)[c.contentView viewWithTag:5]).text=[NSString stringWithFormat:@"%ld",(long)ip.row+1];
     UIImageView*cov=(UIImageView*)[c.contentView viewWithTag:1];
     if(cov){ cov.image=nil; [MMCovers load:t[@"cover"] into:cov]; }   // gemeinsamer RAM+Platte-Cache (reuse-sicher)
+    c.contentView.alpha=(_offline && ![MMSpotify playableOffline:t[@"id"]])?0.35:1;   // offline nicht spielbar -> grau
     return c;
 }
+// was ohne Netz spielt (heruntergeladen / im Song-Cache); online alles
+- (NSArray *)playableTracks {
+    if(!_offline) return _tracks;
+    NSMutableArray*p=[NSMutableArray array]; for(NSDictionary*t in _tracks) if([MMSpotify playableOffline:t[@"id"]]) [p addObject:t];
+    return p;
+}
 - (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
-    [[MMRootController shared] playList:_tracks index:ip.row context:[self context]];
+    NSDictionary*t=_tracks[ip.row]; NSArray*list=[self playableTracks]; NSUInteger i=[list indexOfObject:t];
+    if(i==NSNotFound) return;   // offline und nicht gespeichert: grau, spielt nicht
+    [[MMRootController shared] playList:list index:(NSInteger)i context:[self context]];
     [[MMRootController shared] openPlayer];   // Player als Vollbild; Titelliste bleibt darunter im Inhaltsbereich
 }
 // Herkunft für den Verlauf: Lieblingssongs, Playlist oder Album (Cover = Albumcover des ersten Titels)

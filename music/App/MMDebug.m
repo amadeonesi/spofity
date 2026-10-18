@@ -113,6 +113,7 @@ static void run(NSString*line){
         [o writeToFile:MMPath(@"ext.txt") atomically:YES encoding:NSUTF8StringEncoding error:NULL]; MMLog(@"debug: ext %lu B",(unsigned long)pl.length); });
     else if([c isEqualToString:@"raw"]) dispatch_async(dispatch_get_global_queue(0,0), ^{
         NSData*d=[MMSpotify debugRaw:rest]; [d?:[NSData data] writeToFile:MMPath(@"raw.json") atomically:YES]; MMLog(@"debug: raw %lu B",(unsigned long)d.length); });
+    else if([c isEqualToString:@"push"] && w.count==2 && [w[1] isEqualToString:@"diag"]) [root pushContent:[[NSClassFromString(@"MMDiagnosticsController") alloc] init]];   // push diag: Seite "Debug info"
     else if([c isEqualToString:@"push"] && w.count>=3){
         NSString*name=w.count>3?[[w subarrayWithRange:NSMakeRange(3,w.count-3)] componentsJoinedByString:@" "]:@"Album";
         if([w[1] isEqualToString:@"album"]) [root pushContent:[[MMTrackListController alloc] initWithTitle:name path:[@"albums/" stringByAppendingString:w[2]]]];
@@ -129,6 +130,9 @@ static void run(NSString*line){
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)([rest doubleValue]*NSEC_PER_MSEC)),dispatch_get_main_queue(),^{
             UIViewController*vc=[[root valueForKey:@"_pushedStack"] lastObject];
             MMLog(@"debug: probe %@ frame=%@ live=%@", NSStringFromClass([vc class]), NSStringFromCGRect(vc.view.frame), NSStringFromCGRect([(CALayer*)vc.view.layer.presentationLayer frame])); }); }
+    else if([c isEqualToString:@"keyrefuse"]) [MMSpotify debugFakeKeyRefusals];   // keyrefuse: Konto-verweigert-Popup testen
+    else if([c isEqualToString:@"aptest"]) [MMSpotify debugApTest:rest];   // aptest <ip:port>: Verbindungs-Zeitlimit prüfen
+    else if([c isEqualToString:@"cdntest"]) [MMSpotify debugCdnTest:rest];   // cdntest <trackId>: jede CDN-Adresse mit iOS-TLS und mbedTLS laden
     else if([c isEqualToString:@"lastrow"]){   // lastrow: wie mit dem Finger ganz nach unten (mit contentInset)
         UIViewController*vc=[[root valueForKey:@"_pushedStack"] lastObject]?:[root valueForKey:@"_vcs"][[[root valueForKey:@"_sel"] integerValue]];
         UITableView*tv=[vc valueForKey:@"_table"]; NSInteger sc=tv.numberOfSections-1; while(sc>0 && ![tv numberOfRowsInSection:sc]) sc--;

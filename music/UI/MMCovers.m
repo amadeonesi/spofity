@@ -170,7 +170,10 @@ static NSString *mosaicMemo(void){ return MMPath(@".spotcache/plcovers.plist"); 
     if(!memo){ memo=[[NSDictionary dictionaryWithContentsOfFile:mosaicMemo()] mutableCopy]?:[NSMutableDictionary dictionary]; waiting=[NSMutableDictionary dictionary]; }
     NSDictionary*m=memo[pid];
     NSString*mu=m[@"url"];
+    // Mosaik-Dateien liegen im App-Ordner, dessen Name sich bei jedem Update ändert -> gemerkten Pfad auf den aktuellen Ordner umbiegen
+    if([mu hasPrefix:@"file:"]) mu=[[NSURL fileURLWithPath:[imgDir() stringByAppendingPathComponent:[[(NSURL*)[NSURL URLWithString:mu] path] lastPathComponent]]] absoluteString];
     BOOL fileGone=[mu hasPrefix:@"file:"] && ![[NSFileManager defaultManager] fileExistsAtPath:[(NSURL*)[NSURL URLWithString:mu] path]];   // inzwischen abgelaufen
+    if(mu.length && !fileGone && ![MMSpotify networkReachable]){ if(done)done(mu); return; }   // offline: gemerktes Mosaik immer nehmen, nicht neu bauen
     double age=[[NSDate date] timeIntervalSince1970]-[m[@"t"] doubleValue];
     if(m && !fileGone && age<(mu.length?7*86400:3600)){ if(done)done(mu.length?mu:nil); return; }   // Treffer eine Woche merken, Fehlschlag (z.B. offline) nur 1 h
     if(waiting[pid]){ if(done)[waiting[pid] addObject:[done copy]]; return; }   // schon unterwegs -> mitwarten

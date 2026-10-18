@@ -29,6 +29,7 @@ void MMLog(NSString *fmt, ...) NS_FORMAT_FUNCTION(1,2);   // ins App-Log (Librar
 + (void)prefetchTrack:(NSString *)trackId;
 // --- Offline: Playlists herunterladen ---
 + (BOOL)isDownloaded:(NSString *)trackId;
++ (BOOL)playableOffline:(NSString *)trackId;   // heruntergeladen, im Song-Cache oder im RAM -> spielt ohne Netz
 + (BOOL)allDownloaded:(NSArray *)trackIds;   // sind alle trackIds auf der Platte?
 // Reiht Tracks in die globale Download-Warteschlange ein (mehrere Playlists nacheinander).
 // Status per Notification: MMDownloadProgress {done,total} · MMDownloadDone {ok} · MMDownloadFull
@@ -47,6 +48,12 @@ void MMLog(NSString *fmt, ...) NS_FORMAT_FUNCTION(1,2);   // ins App-Log (Librar
 + (long long)songCacheBytes;   // zuletzt gespielte Songs auf der Platte (max. 500 MB)
 + (void)clearSongCache;
 + (long long)cacheBytes;      // Größe des Offline-Caches (.spotcache)
++ (NSString *)productType;     // "premium", "free", … (nil bis Spotify es nach dem Login schickt)
++ (NSString *)country;         // Land des Kontos (z.B. "US")
++ (NSString *)keyStatus;       // Song-Schlüssel in dieser Sitzung: ok / verweigert (mit Fehlercode)
++ (NSString *)diagnosticLog;   // gefilterte Log-Zeilen für die Seite "Fehlerinfos" (ohne Zugangsdaten)
++ (void)runConnectionTest:(void(^)(NSString *line))line done:(void(^)(void))done;   // für "Debug info": Netz, Server/Ports, Song-Schlüssel, Download
++ (NSString *)deviceModel;     // z.B. "iPod4,1"
 + (BOOL)isLoading;   // true während ein Track geladen/entschlüsselt wird
 // Eigener Spotify-Entwickler-Schlüssel (nur für die Suche). Wird vor dem Speichern bei Spotify geprüft.
 + (BOOL)hasSearchKey;
@@ -77,4 +84,9 @@ void MMLog(NSString *fmt, ...) NS_FORMAT_FUNCTION(1,2);   // ins App-Log (Librar
 + (NSNumber *)likedCached:(NSString *)trackId;    // @YES/@NO sofort, nil = noch nicht bekannt
 + (void)isLiked:(NSString *)trackId completion:(void(^)(BOOL liked, BOOL known))done;   // known=NO: Liste nicht ladbar (offline)
 + (void)addTrack:(NSString *)trackId toPlaylist:(NSString *)playlistId completion:(void(^)(BOOL ok))done;
+#ifdef DEBUG
++ (void)debugCdnTest:(NSString *)trackId;
++ (void)debugApTest:(NSString *)ipPort;
++ (void)debugFakeKeyRefusals;
+#endif
 @end

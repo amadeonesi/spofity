@@ -59,11 +59,13 @@
 // Titel/Artist/Cover: erst aus den gespeicherten Listen (geht offline), was fehlt übers Netz
 - (void)loadKnownInfo {
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW,0), ^{ @autoreleasepool {
-        NSMutableDictionary*by=[NSMutableDictionary dictionary]; NSString*dir=MMPath(@".spotcache");
+        NSString*dir=MMPath(@".spotcache");
+        NSMutableDictionary*by=[[NSDictionary dictionaryWithContentsOfFile:[dir stringByAppendingPathComponent:@"dlinfo.plist"]] mutableCopy]?:[NSMutableDictionary dictionary];   // beim Herunterladen gemerkt
+        for(NSString*k in [by allKeys]) if(![by[k][@"title"] length] || [by[k][@"title"] isEqualToString:@"…"]) [by removeObjectForKey:k];
         for(NSString*f in [[NSFileManager defaultManager] contentsOfDirectoryAtPath:dir error:NULL]){
             if(![f hasPrefix:@"list_"] || ![f hasSuffix:@".plist"]) continue;
             for(NSDictionary*t in [NSArray arrayWithContentsOfFile:[dir stringByAppendingPathComponent:f]]){
-                if(![t isKindOfClass:[NSDictionary class]] || ![t[@"id"] isKindOfClass:[NSString class]]) continue;
+                if(![t isKindOfClass:[NSDictionary class]] || ![t[@"id"] isKindOfClass:[NSString class]] || ![t[@"title"] length] || [t[@"title"] isEqualToString:@"…"]) continue;   // "…" = Platzhalter, kein Titel
                 by[t[@"id"]]=@{@"title":t[@"title"]?:@"",@"artist":t[@"artist"]?:@"",@"cover":t[@"cover"]?:@""};
             }
         }
