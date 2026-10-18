@@ -1,0 +1,183 @@
+// MMDebug.m - nur in Debug-Builds (gmake ohne FINALPACKAGE): Fernsteuerung über SSH zum Testen auf dem 3GS.
+// Befehle zeilenweise in Library/Riff/.cmd schreiben; die App liest die Datei jede Sekunde, führt aus und löscht sie.
+//   shot                     alle Fenster -> Library/Riff/shot.png (ohne Statusleiste, die zeichnet das System)
+//   api <pfad>               GET über apiUser -> Library/Riff/api.json
+//   ext <kind> <uri>         roher extended-metadata-Payload als Protobuf-Baum -> Library/Riff/ext.txt
+//   call <ziel> <selector>   ziel = root | pushed | tab | player | alert (Button-Index als selector: alert 1)
+//   queue next|last <id> <titel>   ·   unqueue <titel>   ·   move <von> <nach>   ·   closesheet
+//   fakeswipe began|changed|ended|cancelled <dx>   Wischen nach rechts auf Zeile 1 nachspielen
+//   playrow [abschnitt] <zeile>  Zeile der obersten geöffneten Liste antippen
+//   menu                     Titel-Menü (wie lange drücken) für den laufenden Titel
+//   raw <spclient-pfad>      ungefilterte JSON-Antwort -> Library/Riff/raw.json
+//   push album|artist <id> [name]   ·   tab <n>   ·   search <text>
+#ifdef DEBUG
+#import <UIKit/UIKit.h>
+#import <objc/message.h>
+#import <objc/runtime.h>
+#import "MMSpotify.h"
+#import "MMAudio.h"
+#import "MMRootController.h"
+#import "MMTrackListController.h"
+#import "MMArtistController.h"
+#import "MMSongMenu.h"
+#import "MMSheet.h"
+
+// Unechter Wisch-Erkenner: liefert feste Werte, damit swipePan: ohne Finger getestet werden kann
+@interface MMFakePan : UIPanGestureRecognizer
+@property (nonatomic) CGPoint fakeT, fakeLoc; @property (nonatomic) UIGestureRecognizerState fakeState; @property (nonatomic,weak) UIView *fakeView;
+@end
+@implementation MMFakePan
+- (CGPoint)translationInView:(UIView *)v { return self.fakeT; }
+- (CGPoint)locationInView:(UIView *)v { return self.fakeLoc; }
+- (CGPoint)velocityInView:(UIView *)v { return CGPointMake(self.fakeT.x<0?-500:500,0); }
+- (UIGestureRecognizerState)state { return self.fakeState; }
+- (UIView *)view { return self.fakeView; }
+@end
+static MMFakePan *gFake;
+
+@interface MMSpotify (Debug)
++ (NSData *)debugExt:(NSString *)uri kind:(int)kind;
++ (NSData *)debugRaw:(NSString *)path;
+@end
+
+static uint64_t dvar(const unsigned char*b,NSUInteger len,NSUInteger*p){uint64_t r=0;int s=0;while(*p<len){unsigned char c=b[(*p)++];r|=(uint64_t)(c&0x7f)<<s;if(!(c&0x80))break;s+=7;}return r;}
+// Protobuf ohne Schema als Baum ausgeben: Länge-Felder werden als Untermeldung versucht, sonst als Text/Hex.
+static BOOL dump(NSData*m,int depth,NSMutableString*out){
+    const unsigned char*b=m.bytes; NSUInteger len=m.length,pos=0; NSMutableString*tmp=[NSMutableString string];
+    while(pos<len){ uint64_t tag=dvar(b,len,&pos); int f=(int)(tag>>3),wt=(int)(tag&7); if(f==0) return NO;
+        NSString*ind=[@"" stringByPaddingToLength:depth*2 withString:@" " startingAtIndex:0];
+        if(wt==0){ [tmp appendFormat:@"%@%d: %llu\n",ind,f,dvar(b,len,&pos)]; }
+        else if(wt==2){ uint64_t l=dvar(b,len,&pos); if(pos+l>len) return NO; NSData*v=[m subdataWithRange:NSMakeRange(pos,(NSUInteger)l)]; pos+=(NSUInteger)l;
+            NSMutableString*sub=[NSMutableString string];
+            NSString*txt=[[NSString alloc] initWithData:v encoding:NSUTF8StringEncoding];
+            BOOL printable=txt.length && [txt rangeOfCharacterFromSet:[NSCharacterSet controlCharacterSet]].location==NSNotFound;
+            if(printable) [tmp appendFormat:@"%@%d: \"%@\"\n",ind,f,txt];
+            else if(depth<6 && v.length && dump(v,depth+1,sub)) [tmp appendFormat:@"%@%d {\n%@%@}\n",ind,f,sub,ind];
+            else { NSMutableString*h=[NSMutableString string]; const unsigned char*vb=v.bytes; for(NSUInteger i=0;i<v.length&&i<24;i++)[h appendFormat:@"%02x",vb[i]];
+                [tmp appendFormat:@"%@%d: <%lu B %@>\n",ind,f,(unsigned long)v.length,h]; } }
+        else if(wt==5){ pos+=4; [tmp appendFormat:@"%@%d: (32bit)\n",ind,f]; }
+        else if(wt==1){ pos+=8; [tmp appendFormat:@"%@%d: (64bit)\n",ind,f]; }
+        else return NO;
+        if(pos>len) return NO;
+    }
+    [out appendString:tmp]; return YES;
+}
+
+static void shot(void){
+    UIWindow*kw=[UIApplication sharedApplication].keyWindow; CGSize sz=kw.bounds.size;
+    UIGraphicsBeginImageContextWithOptions(sz,YES,1);
+    for(UIWindow*w in [UIApplication sharedApplication].windows) if(!w.hidden) [w.layer renderInContext:UIGraphicsGetCurrentContext()];
+    NSData*png=UIImagePNGRepresentation(UIGraphicsGetImageFromCurrentImageContext()); UIGraphicsEndImageContext();
+    [png writeToFile:MMPath(@"shot.png") atomically:YES]; MMLog(@"debug: shot %lu B", (unsigned long)png.length);
+}
+static UIAlertView* findAlert(UIView*v){ if([v isKindOfClass:[UIAlertView class]]) return (UIAlertView*)v; for(UIView*s in v.subviews){ UIAlertView*a=findAlert(s); if(a) return a; } return nil; }
+
+static void run(NSString*line){
+    NSArray*w=[line componentsSeparatedByString:@" "]; NSString*c=w[0]; MMRootController*root=[MMRootController shared];
+    NSString*rest=w.count>1?[[w subarrayWithRange:NSMakeRange(1,w.count-1)] componentsJoinedByString:@" "]:@"";
+    MMLog(@"debug: %@", line);
+    if([c isEqualToString:@"shot"]) shot();
+    else if([c isEqualToString:@"api"]) [MMSpotify apiUser:@"GET" path:rest body:nil completion:^(NSDictionary*j,NSInteger st){
+        NSData*d=j?[NSJSONSerialization dataWithJSONObject:j options:NSJSONWritingPrettyPrinted error:NULL]:nil;
+        [d?:[NSData data] writeToFile:MMPath(@"api.json") atomically:YES]; MMLog(@"debug: api %@ -> %ld, %lu B",rest,(long)st,(unsigned long)d.length); }];
+    else if([c isEqualToString:@"ext"] && w.count>=3) dispatch_async(dispatch_get_global_queue(0,0), ^{
+        NSData*pl=[MMSpotify debugExt:w[2] kind:[w[1] intValue]]; NSMutableString*o=[NSMutableString string];
+        if(!pl.length || !dump(pl,0,o)) [o appendFormat:@"(kein/unlesbarer Payload, %lu B)\n",(unsigned long)pl.length];
+        [o writeToFile:MMPath(@"ext.txt") atomically:YES encoding:NSUTF8StringEncoding error:NULL]; MMLog(@"debug: ext %lu B",(unsigned long)pl.length); });
+    else if([c isEqualToString:@"raw"]) dispatch_async(dispatch_get_global_queue(0,0), ^{
+        NSData*d=[MMSpotify debugRaw:rest]; [d?:[NSData data] writeToFile:MMPath(@"raw.json") atomically:YES]; MMLog(@"debug: raw %lu B",(unsigned long)d.length); });
+    else if([c isEqualToString:@"push"] && w.count>=3){
+        NSString*name=w.count>3?[[w subarrayWithRange:NSMakeRange(3,w.count-3)] componentsJoinedByString:@" "]:@"Album";
+        if([w[1] isEqualToString:@"album"]) [root pushContent:[[MMTrackListController alloc] initWithTitle:name path:[@"albums/" stringByAppendingString:w[2]]]];
+        else [root pushContent:[[MMArtistController alloc] initWithArtistId:w[2] name:w.count>3?name:nil]];
+    }
+    else if([c isEqualToString:@"queue"] && w.count>=4) [root queueTrack:@{@"id":w[2],@"title":[[w subarrayWithRange:NSMakeRange(3,w.count-3)] componentsJoinedByString:@" "],@"artist":@"test",@"cover":@""} next:[w[1] isEqualToString:@"next"]];
+    else if([c isEqualToString:@"unqueue"]){   // Test-Einträge wieder entfernen (liegen alle hinter dem laufenden Titel)
+        for(NSString*k in @[@"_queue",@"_origQueue",@"_userQueue"]){ NSArray*q=[root valueForKey:k]; if(!q) continue;
+            [root setValue:[q filteredArrayUsingPredicate:[NSPredicate predicateWithFormat:@"title != %@",rest]] forKey:k]; }
+        [root performSelector:@selector(saveState)]; }
+    else if([c isEqualToString:@"move"] && w.count>=3) [root moveQueueFrom:[w[1] integerValue] to:[w[2] integerValue]];
+    else if([c isEqualToString:@"closesheet"]){ for(UIView*v in root.view.subviews) if(v.tag==MMSheetTag && [v respondsToSelector:@selector(tapOutside)]) [v performSelector:@selector(tapOutside)]; }
+    else if([c isEqualToString:@"timesnap"]){   // wie lange das Bild der App beim Runterziehen des Players dauert
+        UIView*app=root.view; double t0=CACurrentMediaTime();
+        UIGraphicsBeginImageContextWithOptions(app.bounds.size,YES,0); [app.layer renderInContext:UIGraphicsGetCurrentContext()]; UIGraphicsEndImageContext();
+        MMLog(@"debug: snapshot %.0f ms (window=%@)",(CACurrentMediaTime()-t0)*1000, app.window?@"ja":@"nein"); }
+    else if([c isEqualToString:@"playrow"]){   // Zeile in der obersten geöffneten Liste antippen (Abschnitt 0 bzw. "<abschnitt> <zeile>")
+        UIViewController*vc=[[root valueForKey:@"_pushedStack"] lastObject]?:[root valueForKey:@"_vcs"][[[root valueForKey:@"_sel"] integerValue]];
+        UITableView*tv=[vc valueForKey:@"_table"];
+        NSInteger sec=w.count>2?[w[1] integerValue]:0, row=[[w lastObject] integerValue];
+        [(id<UITableViewDelegate>)vc tableView:tv didSelectRowAtIndexPath:[NSIndexPath indexPathForRow:row inSection:sec]]; }
+    else if([c isEqualToString:@"fakeswipe"] && w.count>=3){   // fakeswipe began|changed|ended <dx>  auf Zeile 1 der obersten Liste
+        UIViewController*vc=root; while(vc.presentedViewController) vc=vc.presentedViewController;   // Warteschlange o. ä. offen?
+        if(vc==root || ![vc respondsToSelector:NSSelectorFromString(@"trackAt:")]) vc=[[root valueForKey:@"_pushedStack"] lastObject];
+        UITableView*tv=[vc valueForKey:@"_table"];
+        NSInteger fsec=w.count>4?[w[3] integerValue]:0, frow=w.count>4?[w[4] integerValue]:1;   // fakeswipe <phase> <dx> [abschnitt zeile]
+        if(!gFake){ gFake=[[MMFakePan alloc] init]; }
+        UIGestureRecognizer*real=nil; for(UIGestureRecognizer*g in tv.gestureRecognizers) if([g isKindOfClass:[UIPanGestureRecognizer class]] && g!=tv.panGestureRecognizer) real=g;
+        gFake.fakeView=tv; gFake.fakeLoc=[tv rectForRowAtIndexPath:[NSIndexPath indexPathForRow:frow inSection:fsec]].origin; gFake.fakeLoc=CGPointMake(100,gFake.fakeLoc.y+20);
+        gFake.fakeT=CGPointMake([w[2] floatValue],0);
+        gFake.fakeState=[w[1] isEqualToString:@"began"]?UIGestureRecognizerStateBegan:[w[1] isEqualToString:@"changed"]?UIGestureRecognizerStateChanged:UIGestureRecognizerStateEnded;
+        MMLog(@"debug: fakeswipe real=%@", real?@"ja":@"nein");
+        [MMSongMenu performSelector:NSSelectorFromString(@"debugSwipe:real:") withObject:gFake withObject:real];
+    }
+    else if([c isEqualToString:@"scroll"]){   // scroll <y>: Liste im aktuellen Tab bzw. der obersten geöffneten Ansicht
+        UIViewController*vc=[[root valueForKey:@"_pushedStack"] lastObject]?:[root valueForKey:@"_vcs"][[[root valueForKey:@"_sel"] integerValue]];
+        UIScrollView*sv=nil; @try{ sv=[vc valueForKey:@"_table"]; }@catch(NSException*e){ sv=[vc valueForKey:@"_sc"]; }
+        [sv setContentOffset:CGPointMake(0,[rest floatValue]) animated:NO]; }
+    else if([c isEqualToString:@"fr"]){   // wer ist gerade First Responder (bekommt die Sperrbildschirm-Tasten)?
+        UIWindow*kw=[UIApplication sharedApplication].keyWindow; id fr=((id(*)(id,SEL))objc_msgSend)(kw,NSSelectorFromString(@"firstResponder"));
+        MMLog(@"debug: firstResponder=%@ rootIsFR=%d presented=%@",fr?NSStringFromClass([fr class]):@"(keiner)",[root isFirstResponder],NSStringFromClass([root.presentedViewController class])); }
+    else if([c isEqualToString:@"setbool"] && w.count>=3){ [[NSUserDefaults standardUserDefaults] setBool:[w[2] boolValue] forKey:w[1]]; [[NSUserDefaults standardUserDefaults] synchronize]; }   // setbool <key> 0|1
+    else if([c isEqualToString:@"npswipe"] && w.count>=3){   // npswipe began|changed|ended <dx>: Wischen in der Leiste unten nachspielen
+        if(!gFake) gFake=[[MMFakePan alloc] init];
+        gFake.fakeView=[root valueForKey:@"_npBar"]; gFake.fakeT=CGPointMake([w[2] floatValue],0);
+        gFake.fakeState=[w[1] isEqualToString:@"began"]?UIGestureRecognizerStateBegan:[w[1] isEqualToString:@"changed"]?UIGestureRecognizerStateChanged:UIGestureRecognizerStateEnded;
+        ((void(*)(id,SEL,id))objc_msgSend)(root,NSSelectorFromString(@"npSwipe:"),gFake); }
+    else if([c isEqualToString:@"seekend"]){ [MMAudio seekTo:[MMAudio duration]-2]; MMLog(@"debug: seek to %.0f of %.0f",[MMAudio currentTime],[MMAudio duration]); }   // Titelende testen
+    else if([c isEqualToString:@"audiostate"]) MMLog(@"debug: playing=%d ended=%d t=%.1f",[MMAudio isPlaying],[MMAudio hasEnded],[MMAudio currentTime]);
+    else if([c isEqualToString:@"sheetpan"] && w.count>=3){   // sheetpan began|changed|ended <dy>: offenes Menü nach unten ziehen
+        UIView*host=root.view; UIViewController*pv=root; while(pv.presentedViewController){ pv=pv.presentedViewController; host=pv.view; }
+        UIView*ov=nil; for(UIView*v in host.subviews) if(v.tag==MMSheetTag) ov=v;
+        if(!gFake) gFake=[[MMFakePan alloc] init];
+        gFake.fakeView=ov; gFake.fakeT=CGPointMake(0,[w[2] floatValue]);
+        gFake.fakeState=[w[1] isEqualToString:@"began"]?UIGestureRecognizerStateBegan:[w[1] isEqualToString:@"changed"]?UIGestureRecognizerStateChanged:UIGestureRecognizerStateEnded;
+        if(ov) ((void(*)(id,SEL,id))objc_msgSend)(ov,NSSelectorFromString(@"panelPan:"),gFake); MMLog(@"debug: sheetpan %@",ov?@"ok":@"kein Menü"); }
+    else if([c isEqualToString:@"menu"]) [MMSongMenu showForTrack:root.nowPlaying];
+    else if([c isEqualToString:@"tab"]) ((void(*)(id,SEL,NSInteger))objc_msgSend)(root,NSSelectorFromString(@"selectTab:"),[rest integerValue]);
+    else if([c isEqualToString:@"search"]) [[NSNotificationCenter defaultCenter] postNotificationName:@"MMDebugSearch" object:rest];
+    else if([c isEqualToString:@"call"] && w.count>=3){
+        if([w[1] isEqualToString:@"alert"]){ UIAlertView*a=nil; for(UIWindow*x in [UIApplication sharedApplication].windows){ a=findAlert(x); if(a) break; }
+            [a dismissWithClickedButtonIndex:[w[2] integerValue] animated:NO]; MMLog(@"debug: alert %@",a?@"geklickt":@"nicht gefunden"); return; }
+        id t=nil;
+        if([w[1] isEqualToString:@"root"]) t=root;
+        else if([w[1] isEqualToString:@"pushed"]) t=[[root valueForKey:@"_pushedStack"] lastObject];
+        else if([w[1] isEqualToString:@"tab"]) t=[root valueForKey:@"_vcs"][[[root valueForKey:@"_sel"] integerValue]];
+        else if([w[1] isEqualToString:@"player"]) t=root.presentedViewController;
+        SEL s=NSSelectorFromString(w[2]);
+        if([t respondsToSelector:s]){
+            #pragma clang diagnostic push
+            #pragma clang diagnostic ignored "-Warc-performSelector-leaks"
+            [t performSelector:s];
+            #pragma clang diagnostic pop
+        } else MMLog(@"debug: %@ kann %@ nicht",t,w[2]);
+    }
+    else MMLog(@"debug: unbekannt");
+}
+
+@interface MMDebug : NSObject
+@end
+@implementation MMDebug
++ (void)load {
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [NSTimer scheduledTimerWithTimeInterval:1.0 target:self selector:@selector(poll) userInfo:nil repeats:YES];
+    });
+}
++ (void)poll {
+    NSString*p=MMPath(@".cmd"); NSString*cmds=[NSString stringWithContentsOfFile:p encoding:NSUTF8StringEncoding error:NULL];
+    if(!cmds) return;
+    [[NSFileManager defaultManager] removeItemAtPath:p error:NULL];
+    for(NSString*l in [cmds componentsSeparatedByCharactersInSet:[NSCharacterSet newlineCharacterSet]]){
+        NSString*t=[l stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]]; if(t.length) run(t); }
+}
+@end
+#endif

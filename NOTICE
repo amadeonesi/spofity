@@ -1,0 +1,34 @@
+Spotify6
+Copyright (C) kiwy and contributors.
+Licensed under the GNU General Public License v3.0 (see LICENSE).
+
+This project is a fork of riff by Second Track
+  https://github.com/SecondTrack/riff (GNU General Public License v3.0)
+riff provided the Spotify protocol implementation, playback and the original user interface.
+
+Third-party components
+----------------------
+
+stb_vorbis (vendor/stb/stb_vorbis.c)
+  Ogg Vorbis decoder by Sean Barrett, public domain / MIT (dual license, see the end of the file).
+  https://github.com/nothings/stb
+
+Mbed TLS 3.6.7 (downloaded and built by vendor/mbedtls/fetch.sh and build.sh; not stored in this repository)
+  Apache License 2.0 OR GNU General Public License v2.0 or later.
+  https://github.com/Mbed-TLS/mbedtls
+
+Shannon stream cipher (music/Spot/shannon.c)
+  C port of rust-shannon from the librespot project, MIT License.
+  https://github.com/librespot-org/librespot
+
+Material Icons "music_note" (path used in tools/make_icon.py for the app icon)
+  Google, Apache License 2.0.
+  https://github.com/google/material-design-icons
+
+Apple root certificates (Resources/roots.pem)
+  Public root CA certificates as shipped with macOS, used only to verify TLS connections.
+
+Trademarks
+----------
+Spotify is a trademark of Spotify AB. iPhone, iPod and iOS are trademarks of Apple Inc.
+This project is not affiliated with or endorsed by Spotify or Apple.

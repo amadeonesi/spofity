@@ -1,0 +1,9 @@
+Package: io.github.ikiwy.spotify6widget
+Name: Spotify6 Widget
+Version: 1.0
+Architecture: iphoneos-arm
+Description: Now playing widget for Spotify6 in Notification Center (iOS 6)
+Maintainer: Sanelos
+Author: Sanelos
+Section: Widgets
+Depends: com.chpwn.weeloader
