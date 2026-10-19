@@ -21,7 +21,9 @@
     NSArray *_serverCtx, *_serverRecent; // Spotifys Verlauf (mit Zeitpunkt "at"); wird mit dem Verlauf auf dem iPhone gemischt
     UILabel *_greet;
     UIView *_skel;                // Platzhalter beim allerersten Laden (noch kein Cache)
-    NSArray *_recentPlaylists;    // iPad: zuletzt gehörte Playlists [{id,name,cover}]
+    NSArray *_recentPlaylists;    // zuletzt gehörte Playlists [{id,name,cover}]
+    BOOL _needsRender;            // verdeckt geändert: beim nächsten Sichtbarwerden neu zeichnen
+    NSMutableDictionary *_rows, *_oldRows;   // gezeichnete Reihen: Schlüssel -> {data, views, h, w} (unverändert = wiederverwenden)
 }
 
 - (NSString *)greeting {
@@ -82,7 +84,7 @@
     [MMSpotify apiUserCached:@"me/player/recently-played?limit=30" completion:^(NSDictionary*j,NSInteger st,BOOL fresh){
         _serverRecent=[self parseTracks:j[@"items"] dedupe:YES]; [self rebuildRecentTracks]; [self render];
     }];
-    [MMRecent playlists:20 done:^(NSArray*list){ _recentPlaylists=list; [self render]; }];
+    [MMRecent playlists:20 done:^(NSArray*list){ if([list isEqual:_recentPlaylists]) return; _recentPlaylists=list; [self render]; }];   // unverändert: nicht neu zeichnen
     [MMSpotify apiUserCached:@"me/top/tracks?limit=20&time_range=short_term" completion:^(NSDictionary*j,NSInteger st,BOOL fresh){
         _top=[self parseTracks:j[@"items"] dedupe:NO]; [self render];
     }];
@@ -104,7 +106,7 @@ static NSArray* byTime(NSArray*a,NSArray*b,NSString*(^key)(NSDictionary*),NSUInt
 }
 - (void)historyChangedNow {
     [self rebuildRecentTiles]; [self rebuildRecentTracks]; [self render];
-    [MMRecent playlists:20 done:^(NSArray*list){ _recentPlaylists=list; [self render]; }];
+    [MMRecent playlists:20 done:^(NSArray*list){ if([list isEqual:_recentPlaylists]) return; _recentPlaylists=list; [self render]; }];   // unverändert: nicht neu zeichnen
 }
 - (void)rebuildRecentTracks {
     if(!_serverRecent && ![MMHistory tracks].count) return;
@@ -176,8 +178,13 @@ static NSArray* byTime(NSArray*a,NSArray*b,NSString*(^key)(NSDictionary*),NSUInt
                      animations:^{ _skel.alpha=0.35; } completion:nil];
 }
 
+// Sichtbar = im Fenster und keine Seite darüber geöffnet. Verdeckt kostet ein Neuzeichnen (alle Reihen neu) auf dem 3GS spürbar Zeit
+- (BOOL)onScreen { return self.view.window && ![MMRootController shared].hasPushedContent; }
+- (void)pageDidShow { if(_needsRender){ _needsRender=NO; [self render]; } }
 - (void)render {
     if(!_quick && !_recent && !_top) return;
+    if(!_skel && ![self onScreen]){ _needsRender=YES; return; }   // erstes Laden (Platzhalter) immer zeichnen
+    _needsRender=NO;
     if(_skel){
         if(!_quick || !_recent) return;   // erstes Laden: erst umschalten, wenn Kacheln UND „Zuletzt gehört“ da sind -> kein Springen
         UIView*sk=_skel; _skel=nil; [sk.layer removeAllAnimations];
@@ -187,15 +194,31 @@ static NSArray* byTime(NSArray*a,NSArray*b,NSString*(^key)(NSDictionary*),NSUInt
     NSMutableDictionary*rowX=[NSMutableDictionary dictionary];
     for(UIView*v in _content.subviews){ if(v.tag>=1 && v.tag<=6 && [v isKindOfClass:[UIScrollView class]]) rowX[@(v.tag)]=@(((UIScrollView*)v).contentOffset.x); }
     for(UIView*v in [_content.subviews copy]) [v removeFromSuperview];
+    _oldRows=_rows; _rows=[NSMutableDictionary dictionary];   // alte Reihen bleiben bis zum Ende greifbar
     _y=8;
-    if(_quick.count) [self buildGrid];
+    if(_quick.count) [self row:@"grid" data:_quick build:^{ [self buildGrid]; }];
     // zuletzt gehörte Titel (Kacheln), Playlists, Alben und Artists (iPhone und iPad gleich)
-    if(_recent.count) [self addSongTiles:L(@"Recently played") offset:[rowX[@5] floatValue]];
-    if(_recentPlaylists.count) [self addCoverRow:L(@"Recent playlists") items:_recentPlaylists round:NO section:3 offset:[rowX[@3] floatValue]];
-    NSArray*albs=[self recentAlbums]; if(albs.count) [self addCoverRow:L(@"Recent albums") items:albs round:NO section:6 offset:[rowX[@6] floatValue]];
-    NSArray*arts=[self recentArtists]; if(arts.count) [self addCoverRow:L(@"Recent artists") items:arts round:YES section:4 offset:[rowX[@4] floatValue]];
-    if(_top.count) [self addCarousel:L(@"Your top tracks") tracks:_top section:2 offset:[rowX[@2] floatValue]];
+    if(_recent.count) [self row:@"songs" data:_recent build:^{ [self addSongTiles:L(@"Recently played") offset:[rowX[@5] floatValue]]; }];
+    if(_recentPlaylists.count) [self row:@"playlists" data:_recentPlaylists build:^{ [self addCoverRow:L(@"Recent playlists") items:_recentPlaylists round:NO section:3 offset:[rowX[@3] floatValue]]; }];
+    NSArray*albs=[self recentAlbums]; if(albs.count) [self row:@"albums" data:albs build:^{ [self addCoverRow:L(@"Recent albums") items:albs round:NO section:6 offset:[rowX[@6] floatValue]]; }];
+    NSArray*arts=[self recentArtists]; if(arts.count) [self row:@"artists" data:arts build:^{ [self addCoverRow:L(@"Recent artists") items:arts round:YES section:4 offset:[rowX[@4] floatValue]]; }];
+    if(_top.count) [self row:@"top" data:_top build:^{ [self addCarousel:L(@"Your top tracks") tracks:_top section:2 offset:[rowX[@2] floatValue]]; }];
+    _oldRows=nil;
     [self finish];
+}
+// Eine Reihe zeichnen oder, wenn Daten und Breite gleich geblieben sind, die vorhandenen Ansichten nur an die neue Stelle schieben.
+// Nach einem neuen Titel ändert sich meist nur "Zuletzt gehört": alles neu aufzubauen hielt den 3GS jedes Mal spürbar an.
+- (void)row:(NSString *)key data:(id)data build:(void(^)(void))build {
+    NSDictionary*o=_oldRows[key]; CGFloat y0=_y; NSArray*views;
+    if(o && [o[@"data"] isEqual:data] && [o[@"w"] floatValue]==_W){
+        CGFloat dy=_y-[o[@"y"] floatValue];
+        views=o[@"views"]; for(UIView*v in views){ v.frame=CGRectOffset(v.frame,0,dy); [_content addSubview:v]; }
+        _y+=[o[@"h"] floatValue];
+    } else {
+        NSUInteger n0=_content.subviews.count; build();
+        views=[_content.subviews subarrayWithRange:NSMakeRange(n0,_content.subviews.count-n0)];
+    }
+    _rows[key]=@{@"data":data,@"views":views,@"y":@(y0),@"h":@(_y-y0),@"w":@(_W)};
 }
 
 // ---------- 1) Schnellzugriff-Grid (deine Playlists + Lieblingssongs) ----------

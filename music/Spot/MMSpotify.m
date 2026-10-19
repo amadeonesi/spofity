@@ -227,6 +227,7 @@ static NSString*hexd(const unsigned char*b,int n){NSMutableString*m=[NSMutableSt
 + (void)postDlProgress;
 + (void)dlStep;
 + (void)dlFinishTrack:(NSString *)tid;
++ (void)dlSkipUnavailable:(NSString *)tid;
 @end
 
 // Download mit Fortschritt: NSURLConnection auf dem Runloop des aufrufenden (Hintergrund-)Threads, bis fertig
@@ -677,8 +678,9 @@ static void aesCTR_mbed(const void*key,const void*in,void*out,size_t n){
 + (BOOL)playableOffline:(NSString *)trackId { return trackId.length && (diskHas(trackId) || streamHas(trackId) || cacheGet(trackId)); }
 + (BOOL)allDownloaded:(NSArray *)trackIds {
     if(!trackIds.count) return NO;
-    for(NSString*t in trackIds) if(!diskHas(t)) return NO;
-    return YES;
+    BOOL any=NO;   // Titel, die Spotify nicht liefern kann, zählen nicht dagegen (aber mindestens einer muss da sein)
+    for(NSString*t in trackIds){ if(diskHas(t)) any=YES; else if(!isUnavailable(t)) return NO; }
+    return any;
 }
 // ===== Globaler Download-Manager mit Warteschlange =====
 // Mehrere Playlists werden hintereinander abgearbeitet (keine zwei Ketten gleichzeitig).
@@ -694,6 +696,22 @@ static void dlBgEnd(void){ dispatch_async(dispatch_get_main_queue(), ^{ if(gDlBg
 static dispatch_queue_t dlDataQ(void){ static dispatch_queue_t q; static dispatch_once_t o; dispatch_once(&o,^{ q=dispatch_queue_create("mesh.dl.data",DISPATCH_QUEUE_SERIAL); }); return q; }
 
 static NSString *offlinePath(void); static NSArray* spTracks(NSArray*ids); static void dlinfoRemember(NSArray*ids);   // weiter unten definiert
+// Titel, für die Spotify keine Audiodatei hat ("No playable file": entfernt, gesperrt, nie lizenziert). Sonst lud jeder Start
+// sie erneut, die Leiste zeigte "135 von 136" und zählte den Fehlschlag dann als geladen. Nach 7 Tagen wird es neu versucht.
+#define DL_UNAVAIL_RETRY (7*24*3600)
+static NSInteger gDlUnavail=0;   // in diesem Durchgang übersprungen (für die Abschlussmeldung)
+static NSString* unavailPath(void){ return [diskDir() stringByAppendingPathComponent:@"unavailable.plist"]; }
+static NSMutableDictionary* unavailDict(void){   // Track-ID -> Zeitpunkt (NSDate) des Fehlschlags; nur unter @synchronized(unavailDict()) benutzen
+    static NSMutableDictionary*d; static dispatch_once_t o;
+    dispatch_once(&o,^{ NSDictionary*f=[NSDictionary dictionaryWithContentsOfFile:unavailPath()]; d=f?[f mutableCopy]:[NSMutableDictionary dictionary]; });
+    return d;
+}
+static BOOL isUnavailable(NSString*tid){
+    NSMutableDictionary*d=unavailDict(); @synchronized(d){ NSDate*t=d[tid]; return [t isKindOfClass:[NSDate class]] && -[t timeIntervalSinceNow]<DL_UNAVAIL_RETRY; }
+}
+static void setUnavailable(NSString*tid, BOOL on){
+    NSMutableDictionary*d=unavailDict(); @synchronized(d){ if(!on && !d[tid]) return; if(on) d[tid]=[NSDate date]; else [d removeObjectForKey:tid]; [d writeToFile:unavailPath() atomically:YES]; }
+}
 + (NSDictionary *)downloadStatus {
     @synchronized([MMSpotify class]){
         NSArray*q=gDlQueue?[gDlQueue copy]:@[]; NSInteger left=(NSInteger)q.count;
@@ -750,7 +768,9 @@ static NSString *offlinePath(void); static NSArray* spTracks(NSArray*ids); stati
         for(NSString*tid in trackIds){
             if(![tid isKindOfClass:[NSString class]]||!tid.length) continue;
             if([gDlSeen containsObject:tid]) continue;   // schon in dieser Session gezählt
-            [gDlSeen addObject:tid]; gDlTotal++;          // zählt in den Nenner (ganze Playlist)
+            [gDlSeen addObject:tid];
+            if(!diskHas(tid) && isUnavailable(tid)){ gDlUnavail++; continue; }   // Spotify hat keine Datei: nicht mitzählen, nicht laden
+            gDlTotal++;                                   // zählt in den Nenner (ganze Playlist)
             if(diskHas(tid)){ gDlDone++; }                // schon offline -> auch in den Zähler (Balken bleibt, springt nicht auf 0)
             else [gDlQueue addObject:tid];                // fehlt -> zum Herunterladen einreihen
         }
@@ -768,12 +788,19 @@ static NSString *offlinePath(void); static NSArray* spTracks(NSArray*ids); stati
     // kleine Pause zwischen Tracks -> senkt Dauer-Stromzug/Wärme (schont schwachen Akku) und lässt Playback durch
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.6*NSEC_PER_SEC)), dispatch_get_global_queue(0,0), ^{ [MMSpotify dlStep]; });
 }
++ (void)dlSkipUnavailable:(NSString *)tid {
+    @synchronized([MMSpotify class]){
+        if(gDlQueue.count && [gDlQueue[0] isEqualToString:tid]) [gDlQueue removeObjectAtIndex:0];
+        if(gDlTotal>0) gDlTotal--; gDlUnavail++; }   // aus dem Nenner nehmen: "135 von 135" statt "136 von 136" mit einem Fehlschlag
+    [self postDlProgress];
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(0.6*NSEC_PER_SEC)), dispatch_get_global_queue(0,0), ^{ [MMSpotify dlStep]; });
+}
 + (void)dlStep {
     NSString*tid=nil; BOOL finished=NO;
     @synchronized([MMSpotify class]){ if(gDlQueue.count==0){ gDlRunning=NO; finished=YES; } else tid=gDlQueue[0]; }
     if(finished){
-        NSInteger okc; @synchronized([MMSpotify class]){ okc=gDlDone; gDlDone=0; gDlTotal=0; [gDlSeen removeAllObjects]; }
-        dispatch_async(dispatch_get_main_queue(), ^{ [[NSNotificationCenter defaultCenter] postNotificationName:@"MMDownloadDone" object:nil userInfo:@{@"ok":@(okc)}]; });
+        NSInteger okc, una; @synchronized([MMSpotify class]){ okc=gDlDone; una=gDlUnavail; gDlDone=0; gDlTotal=0; gDlUnavail=0; [gDlSeen removeAllObjects]; }
+        dispatch_async(dispatch_get_main_queue(), ^{ [[NSNotificationCenter defaultCenter] postNotificationName:@"MMDownloadDone" object:nil userInfo:@{@"ok":@(okc),@"unavailable":@(una)}]; });
         dlBgEnd();
         return;
     }
@@ -785,7 +812,7 @@ static NSString *offlinePath(void); static NSArray* spTracks(NSArray*ids); stati
             if(moved){ slog(@"dl %@ aus dem Song-Cache übernommen",tid); dlinfoRemember(@[tid]); [MMSpotify dlFinishTrack:tid]; return; }
             if([MMSpotify freeDiskBytes] < 80*1024*1024) dispatch_sync(streamQ(), ^{ streamTrim(0,nil); });   // Song-Cache für Downloads freigeben
             if([MMSpotify freeDiskBytes] < 80*1024*1024){   // Platte voll -> abbrechen
-                @synchronized([MMSpotify class]){ [gDlQueue removeAllObjects]; gDlRunning=NO; gDlDone=0; gDlTotal=0; [gDlSeen removeAllObjects]; }
+                @synchronized([MMSpotify class]){ [gDlQueue removeAllObjects]; gDlRunning=NO; gDlDone=0; gDlTotal=0; gDlUnavail=0; [gDlSeen removeAllObjects]; }
                 dispatch_async(dispatch_get_main_queue(), ^{ [[NSNotificationCenter defaultCenter] postNotificationName:@"MMDownloadFull" object:nil userInfo:nil]; });
                 dlBgEnd();
                 return;
@@ -800,7 +827,7 @@ static NSString *offlinePath(void); static NSArray* spTracks(NSArray*ids); stati
                     // Verweigert Spotify dem Konto die Schlüssel ganz (neue Konten), hilft kein Wiederholen -> sofort stoppen
                     if(gDlFails>=12 || accountKeysRefused()){   // trotz Backoff/Reconnect dauerhaft -> sauber stoppen
                         if(gSock>=0){ close(gSock); gSock=-1; }
-                        @synchronized([MMSpotify class]){ [gDlQueue removeAllObjects]; gDlRunning=NO; gDlDone=0; gDlTotal=0; [gDlSeen removeAllObjects]; }
+                        @synchronized([MMSpotify class]){ [gDlQueue removeAllObjects]; gDlRunning=NO; gDlDone=0; gDlTotal=0; gDlUnavail=0; [gDlSeen removeAllObjects]; }
                         gDlFails=0; slog(@"dl ABBRUCH: %@",accountKeysRefused()?@"Spotify verweigert diesem Konto die Schlüssel":@"12 Key-Fehler");
                         dispatch_async(dispatch_get_main_queue(), ^{ [[NSNotificationCenter defaultCenter] postNotificationName:@"MMDownloadError" object:nil userInfo:nil]; });
                         dlBgEnd();
@@ -811,13 +838,15 @@ static NSString *offlinePath(void); static NSArray* spTracks(NSArray*ids); stati
                     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(backoff*NSEC_PER_SEC)), dispatch_get_global_queue(0,0), ^{ [MMSpotify dlStep]; });  // SELBER Track erneut (nicht aus Queue)
                     return;
                 }
-                gDlFails=0; [MMSpotify dlFinishTrack:tid]; return;   // echtes Track-Problem -> überspringen
+                gDlFails=0;
+                if([e isEqualToString:@"No playable file"]){ setUnavailable(tid,YES); [MMSpotify dlSkipUnavailable:tid]; return; }   // merken, nicht als geladen zählen
+                [MMSpotify dlFinishTrack:tid]; return;   // echtes Track-Problem -> überspringen
             }
             gDlFails=0;   // Erfolg -> Fehlerzähler zurücksetzen
             dispatch_async(dlDataQ(), ^{   // großer Download OHNE spotQ zu blockieren
                 @autoreleasepool {
                     NSString*e2=nil; NSData*d=[MMSpotify downloadDecrypt:cdn key:key err:&e2];
-                    if(d.length){ [d writeToFile:diskPath(tid) atomically:YES]; dlinfoRemember(@[tid]); }
+                    if(d.length){ [d writeToFile:diskPath(tid) atomically:YES]; dlinfoRemember(@[tid]); setUnavailable(tid,NO); }
                     [MMSpotify dlFinishTrack:tid];
                 }
             });
@@ -853,7 +882,7 @@ static NSString *offlinePath(void){ return [diskDir() stringByAppendingPathCompo
     // in Zähler+Nenner -> Balken setzt beim Fortsetzen an der echten Prozentzahl an, nicht auf 0.
     NSMutableArray *all=[NSMutableArray array]; NSMutableSet *seen=[NSMutableSet set]; NSUInteger miss=0;
     for(NSDictionary *e in arr){ if(![e isKindOfClass:[NSDictionary class]])continue;
-        for(NSString *tid in e[@"ids"]){ if([tid isKindOfClass:[NSString class]] && tid.length && ![seen containsObject:tid]){ [seen addObject:tid]; [all addObject:tid]; if(!diskHas(tid)) miss++; } } }
+        for(NSString *tid in e[@"ids"]){ if([tid isKindOfClass:[NSString class]] && tid.length && ![seen containsObject:tid]){ [seen addObject:tid]; [all addObject:tid]; if(!diskHas(tid) && !isUnavailable(tid)) miss++; } } }
     if(miss){ slog(@"resume offline: %lu fehlende von %lu Tracks weiterladen", (unsigned long)miss, (unsigned long)all.count); [self queueDownloadTracks:all]; }
 }
 + (long long)freeDiskBytes {
@@ -890,9 +919,9 @@ static NSInteger gPlayDownloads=0; static NSString*gStreamingId=nil, *gDeferredP
     if(same && stream && [MMAudio isBuffering]){ slog(@"playTrack %@ spielt schon (lädt noch)",trackId);
         dispatch_async(dispatch_get_main_queue(), ^{ if(done)done(YES,nil); }); return; }
     NSUInteger gen; @synchronized([MMSpotify class]){ gen=++gPlayGen; }
-    // Cache-Hit (RAM vorgeladen / Disk heruntergeladen) -> sofort abspielen, kein Netz
+    // Cache-Hit (RAM vorgeladen) -> sofort abspielen, kein Netz. Heruntergeladene Titel liest der Block unten von der Platte
+    // (mehrere MB: auf dem Main-Thread hielt das die Oberfläche spürbar an)
     NSData*cd=cacheGet(trackId);
-    if(!cd && diskHas(trackId)){ cd=[NSData dataWithContentsOfFile:diskPath(trackId)]; if(cd.length){ cachePut(trackId,cd); slog(@"playTrack Disk-Hit %@",trackId); } }
     if(cd){ gLoading=NO; slog(@"playTrack Cache-Hit %@", trackId);
         dispatch_async(dispatch_get_main_queue(), ^{ [MMAudio playOgg:cd]; if(done)done(YES,nil); });
         return;
@@ -900,11 +929,13 @@ static NSInteger gPlayDownloads=0; static NSString*gStreamingId=nil, *gDeferredP
     gLoading=YES;
     dispatch_async(dispatch_get_main_queue(), ^{ [MMAudio stop]; });  // alten Track sofort stoppen
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH,0), ^{   // Song-Cache lesen, ohne hinter einem Vorladen auf der spotQ zu warten
-        NSData*sd=streamLoad(trackId);
+        NSData*sd=nil; BOOL disk=NO;
+        if(diskHas(trackId)){ sd=[NSData dataWithContentsOfFile:diskPath(trackId)]; disk=sd.length>0; }
+        if(!sd.length) sd=streamLoad(trackId);
         if(sd.length){ cachePut(trackId,sd);
             BOOL current; @synchronized([MMSpotify class]){ current=(gen==gPlayGen); }
             if(!current){ slog(@"playTrack %@ überholt (neuerer Titel angetippt)",trackId); return; }
-            gLoading=NO; slog(@"playTrack Song-Cache-Hit %@",trackId);
+            gLoading=NO; slog(@"playTrack %@ %@",disk?@"Disk-Hit":@"Song-Cache-Hit",trackId);
             dispatch_async(dispatch_get_main_queue(), ^{ [MMAudio playOgg:sd]; if(done)done(YES,nil); });
             return; }
         void (^play)(NSData*,NSString*)=^(NSData*d,NSString*err){
@@ -1716,7 +1747,7 @@ static void reachChanged(SCNetworkReachabilityRef r,SCNetworkReachabilityFlags f
 // Abmelden (am Ende, damit alle Zustände oben deklariert sind)
 + (void)logoutCompletion:(void(^)(void))done {
     [MMAudio stop];
-    @synchronized([MMSpotify class]){ [gDlQueue removeAllObjects]; gDlRunning=NO; gDlDone=0; gDlTotal=0; [gDlSeen removeAllObjects]; }
+    @synchronized([MMSpotify class]){ [gDlQueue removeAllObjects]; gDlRunning=NO; gDlDone=0; gDlTotal=0; gDlUnavail=0; [gDlSeen removeAllObjects]; }
     // Verbindung sofort kappen: eine laufende Anfrage auf der spotQ bricht damit ab, statt bis zum Timeout zu warten.
     // Schließen und Zurücksetzen der Zustände folgt danach auf der spotQ (dort gehört der Socket hin).
     int s=gSock; if(s>=0) shutdown(s, SHUT_RDWR);

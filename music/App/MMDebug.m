@@ -16,6 +16,9 @@
 #import <QuartzCore/QuartzCore.h>
 #import <objc/message.h>
 #import <objc/runtime.h>
+#import <mach/mach.h>
+#import <pthread.h>
+#import <dlfcn.h>
 #import "MMSpotify.h"
 #import "MMAudio.h"
 #import "MMRootController.h"
@@ -80,7 +83,7 @@ static double gCellSum, gCellMax; static int gCellN;
 @end
 @implementation MMScrollTest
 - (void)tick:(CADisplayLink *)l {
-    if(last>0){ double dt=l.timestamp-last; sum+=dt; n++; if(dt>worst){ worst=dt; MMLog(@"debug: scrolltest slow frame %.0fms at frame %d y=%.0f rows=%ld", dt*1000, n, sv.contentOffset.y, (long)[(UITableView*)sv numberOfRowsInSection:0]); } if(dt>0.020) slow++; }
+    if(last>0){ double dt=l.timestamp-last; sum+=dt; n++; if(dt>worst){ worst=dt; MMLog(@"debug: scrolltest slow frame %.0fms at frame %d y=%.0f rows=%ld", dt*1000, n, sv.contentOffset.y, (long)([sv isKindOfClass:[UITableView class]]?[(UITableView*)sv numberOfRowsInSection:0]:0)); } if(dt>0.020) slow++; }
     last=l.timestamp;
     CGFloat maxY=MAX(0,sv.contentSize.height-sv.bounds.size.height), y=sv.contentOffset.y+step;
     if(y>maxY||y<0){ step=-step; y=MIN(MAX(y,0),maxY); }
@@ -90,6 +93,49 @@ static double gCellSum, gCellMax; static int gCellN;
 }
 @end
 static MMScrollTest*gScroll;
+// cpusample <s>: CPU-Zeit je Thread über <s> Sekunden (Name, Anteil) plus Verzögerung des Hauptthreads -> Log
+static NSDictionary*threadTimes(void){
+    NSMutableDictionary*d=[NSMutableDictionary dictionary]; thread_act_array_t th; mach_msg_type_number_t n=0;
+    if(task_threads(mach_task_self(),&th,&n)!=KERN_SUCCESS) return d;
+    for(mach_msg_type_number_t i=0;i<n;i++){
+        thread_basic_info_data_t bi; mach_msg_type_number_t cnt=THREAD_BASIC_INFO_COUNT;
+        if(thread_info(th[i],THREAD_BASIC_INFO,(thread_info_t)&bi,&cnt)==KERN_SUCCESS){
+            double t=bi.user_time.seconds+bi.user_time.microseconds/1e6+bi.system_time.seconds+bi.system_time.microseconds/1e6;
+            char name[64]=""; pthread_t pt=pthread_from_mach_thread_np(th[i]); if(pt) pthread_getname_np(pt,name,sizeof name);
+            d[@(th[i])]=@[@(t),[NSString stringWithUTF8String:name]]; }
+        mach_port_deallocate(mach_task_self(),th[i]); }
+    vm_deallocate(mach_task_self(),(vm_address_t)th,n*sizeof(thread_t)); return d;
+}
+// Hängt der Hauptthread: seinen Stack abtasten (r7-Kette, armv7) -> Log als Image+Offset, mit atos gegen den Debug-Build auflösen
+static thread_t gMainThread;
+static void sampleMain(void){
+    NSMutableString*o=[NSMutableString string];   // vor dem Anhalten: hält der Hauptthread gerade die malloc-Sperre, hinge sonst alles
+    arm_thread_state_t st; mach_msg_type_number_t cnt=ARM_THREAD_STATE_COUNT;
+    if(thread_suspend(gMainThread)!=KERN_SUCCESS) return;
+    if(thread_get_state(gMainThread,ARM_THREAD_STATE,(thread_state_t)&st,&cnt)==KERN_SUCCESS){
+        uintptr_t pcs[40]; int n=0; pcs[n++]=st.__pc; pcs[n++]=st.__lr; uintptr_t fp=st.__r[7];
+        while(fp && n<40){ uintptr_t*f=(uintptr_t*)fp; uintptr_t next=f[0], ret=f[1]; if(!ret) break; pcs[n++]=ret; if(next<=fp) break; fp=next; }
+        thread_resume(gMainThread);
+        for(int i=0;i<n;i++){ Dl_info di; if(dladdr((void*)pcs[i],&di)&&di.dli_fname){ const char*b=strrchr(di.dli_fname,'/');
+            [o appendFormat:@" %s+0x%lx(%s)",b?b+1:di.dli_fname,(unsigned long)(pcs[i]-(uintptr_t)di.dli_fbase),di.dli_sname?di.dli_sname:"?"]; } }
+    } else thread_resume(gMainThread);
+    MMLog(@"debug: stall stack%@",o);
+}
+static void cpuSample(double secs){
+    NSDictionary*a=threadTimes(); double t0=CFAbsoluteTimeGetCurrent();
+    __block double lagMax=0; __block int lagN=0, lagSlow=0;
+    dispatch_async(dispatch_get_global_queue(0,0), ^{
+        while(CFAbsoluteTimeGetCurrent()-t0<secs){ double s0=CFAbsoluteTimeGetCurrent();
+            __block volatile BOOL done=NO; dispatch_async(dispatch_get_main_queue(), ^{ done=YES; });
+            int k=0; while(!done){ usleep(10000); if(++k%5==0) sampleMain(); } double lag=CFAbsoluteTimeGetCurrent()-s0; lagN++; if(lag>lagMax) lagMax=lag; if(lag>0.05) lagSlow++;
+            usleep(50000); }
+        NSDictionary*b=threadTimes(); double wall=CFAbsoluteTimeGetCurrent()-t0, tot=0; NSMutableArray*rows=[NSMutableArray array];
+        for(NSNumber*k in b){ double d=[b[k][0] doubleValue]-[a[k][0] ?: @0 doubleValue]; tot+=d; if(d>0.01) [rows addObject:@[@(d),[NSString stringWithFormat:@"%@%@",b[k][1],a[k]?@"":@" (new)"],k]]; }
+        [rows sortUsingComparator:^NSComparisonResult(NSArray*x,NSArray*y){ return [y[0] compare:x[0]]; }];
+        MMLog(@"debug: cpusample %.0fs total %.1f%% threads=%lu mainLagMax=%.0fms mainLag>50ms=%d/%d",wall,100*tot/wall,(unsigned long)b.count,lagMax*1000,lagSlow,lagN);
+        for(NSArray*r in rows) MMLog(@"debug: cpusample   %5.1f%% port=%@ %@",100*[r[0] doubleValue]/wall,r[2],r[1]);
+    });
+}
 // Zeit in cellForRow messen (beliebiger Controller): Originalmethode umhüllen
 static void timeCells(Class cls){
     static NSMutableSet*done; if(!done) done=[NSMutableSet set]; if([done containsObject:cls]) return; [done addObject:cls];
@@ -140,6 +186,7 @@ static void run(NSString*line){
     else if([c isEqualToString:@"raw"]) dispatch_async(dispatch_get_global_queue(0,0), ^{
         NSData*d=[MMSpotify debugRaw:rest]; [d?:[NSData data] writeToFile:MMPath(@"raw.json") atomically:YES]; MMLog(@"debug: raw %lu B",(unsigned long)d.length); });
     else if([c isEqualToString:@"push"] && w.count==2 && [w[1] isEqualToString:@"diag"]) [root pushContent:[[NSClassFromString(@"MMDiagnosticsController") alloc] init]];   // push diag: Seite "Debug info"
+    else if([c isEqualToString:@"push"] && w.count==2 && [w[1] isEqualToString:@"liked"]) [root pushContent:[[MMTrackListController alloc] initWithTitle:@"Liked Songs" path:@"me/tracks?market=from_token&limit=50"]];   // push liked: lange Liste für scrolltest
     else if([c isEqualToString:@"push"] && w.count>=3){
         NSString*name=w.count>3?[[w subarrayWithRange:NSMakeRange(3,w.count-3)] componentsJoinedByString:@" "]:@"Album";
         if([w[1] isEqualToString:@"album"]) [root pushContent:[[MMTrackListController alloc] initWithTitle:name path:[@"albums/" stringByAppendingString:w[2]]]];
@@ -193,8 +240,12 @@ static void run(NSString*line){
     else if([c isEqualToString:@"scrolltest"]){   // scrolltest <px pro Frame> <Frames>
         UIViewController*vc=[[root valueForKey:@"_pushedStack"] lastObject]?:[root valueForKey:@"_vcs"][[[root valueForKey:@"_sel"] integerValue]];
         timeCells([vc class]); gCellSum=gCellMax=0; gCellN=0;
-        gScroll=[MMScrollTest new]; gScroll->sv=[vc valueForKey:@"_table"]; gScroll->step=w.count>1?[w[1] floatValue]:12; gScroll->left=w.count>2?[w[2] intValue]:240;
+        gScroll=[MMScrollTest new]; gScroll->sv=[vc valueForKey:class_getInstanceVariable([vc class],"_table")?@"_table":@"_sc"]; gScroll->step=w.count>1?[w[1] floatValue]:12; gScroll->left=w.count>2?[w[2] intValue]:240;
         gScroll->dl=[CADisplayLink displayLinkWithTarget:gScroll selector:@selector(tick:)]; [gScroll->dl addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes]; }
+    else if([c isEqualToString:@"dlmsg"]){   // dlmsg: Abschlussmeldung mit einem nicht lieferbaren Titel zeigen, 1 s später shot
+        [[NSNotificationCenter defaultCenter] postNotificationName:@"MMDownloadDone" object:nil userInfo:@{@"ok":@135,@"unavailable":@1}];
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(1*NSEC_PER_SEC)),dispatch_get_main_queue(),^{ shot(); }); }
+    else if([c isEqualToString:@"cpusample"]) cpuSample(w.count>1?[w[1] doubleValue]:10);
     else if([c isEqualToString:@"scroll"]){   // scroll <y>: Liste im aktuellen Tab bzw. der obersten geöffneten Ansicht
         UIViewController*vc=[[root valueForKey:@"_pushedStack"] lastObject]?:[root valueForKey:@"_vcs"][[[root valueForKey:@"_sel"] integerValue]];
         UIScrollView*sv=[vc valueForKey:class_getInstanceVariable([vc class],"_table")?@"_table":@"_sc"];   // Startseite hat keine Tabelle
@@ -249,6 +300,7 @@ static void run(NSString*line){
 @end
 @implementation MMDebug
 + (void)load {
+    gMainThread=mach_thread_self();
     // Test 4-Zoll: liegt Library/Riff/.tall, meldet der Bildschirm 320x568 -> alle Seiten bauen sich wie auf einem iPod touch 5 auf
     // ("shot" speichert dann das ganze 568er-Fenster; auf dem 3GS selbst ist unten etwas abgeschnitten)
     if([[NSFileManager defaultManager] fileExistsAtPath:MMPath(@".tall")]){

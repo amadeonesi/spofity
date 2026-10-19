@@ -26,18 +26,23 @@ static long long atOf(NSDictionary*d){ id a=d[@"at"]; return [a respondsToSelect
 }
 
 // Seitenleiste und Startseite fragen meist gleichzeitig: eine laufende Anfrage bedient alle Wartenden
+// Spotifys Liste kostet ~20 Anfragen (eine je Playlist) -> höchstens alle 10 Minuten neu holen. Eigene Wiedergaben
+// stehen sofort drin, weil mergePlaylists den Verlauf dieser App (MMHistory) dazumischt.
+#define RECENT_REFRESH 600
 + (void)playlists:(NSUInteger)max done:(void(^)(NSArray *list))done {
-    static NSMutableArray*waiting; static NSArray*lastItems;
+    static NSMutableArray*waiting; static NSArray*lastItems, *knownItems; static CFAbsoluteTime askedAt;
     void (^cb)(NSArray*)=[^(NSArray*items){ done([self mergePlaylists:items max:max]); } copy];
+    // gemessen ab dem letzten Senden: apiUserCached meldet eine unveränderte Antwort gar nicht erst
+    if(!waiting && knownItems && CFAbsoluteTimeGetCurrent()-askedAt<RECENT_REFRESH){ cb(knownItems); return; }
     if(waiting){ [waiting addObject:cb]; if(lastItems) cb(lastItems); return; }   // läuft schon: Zwischenstand sofort, frisch später
-    waiting=[NSMutableArray arrayWithObject:cb]; lastItems=nil;
+    waiting=[NSMutableArray arrayWithObject:cb]; lastItems=nil; askedAt=CFAbsoluteTimeGetCurrent();
     // unveränderte Daten melden sich nicht ein zweites Mal -> Anfrage nach 20 s spätestens als beendet ansehen
     NSMutableArray*mine=waiting;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(20*NSEC_PER_SEC)),dispatch_get_main_queue(),^{ if(waiting==mine) waiting=nil; });
     __block BOOL answered=NO;
     [MMSpotify apiUserCached:@"me/recent-contexts?limit=20" completion:^(NSDictionary*j,NSInteger st,BOOL fresh){
         NSArray*items=[j[@"items"] isKindOfClass:[NSArray class]]?j[@"items"]:nil;
-        if(items) lastItems=items;
+        if(items) lastItems=knownItems=items;
         NSArray*cbs=[waiting copy]; if(fresh) waiting=nil;   // die frische (oder fehlgeschlagene) Antwort beendet die Anfrage
         if(!items && answered) return;
         answered=YES; for(void(^c)(NSArray*) in cbs) c(items);
