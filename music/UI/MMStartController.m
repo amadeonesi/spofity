@@ -1,5 +1,6 @@
 #import "MMStartController.h"
 #import "SpotTheme.h"
+#import "MMLayout.h"
 #import "MMRootController.h"
 #import "MMSongMenu.h"
 #import "MMSpotify.h"
@@ -8,6 +9,7 @@
 #import "MeshL10n.h"
 #import "MMHistory.h"
 #import "MMArtistController.h"
+#import "MMRecent.h"
 
 @implementation MMStartController {
     UIScrollView *_sc;
@@ -19,6 +21,7 @@
     NSArray *_serverCtx, *_serverRecent; // Spotifys Verlauf (mit Zeitpunkt "at"); wird mit dem Verlauf auf dem iPhone gemischt
     UILabel *_greet;
     UIView *_skel;                // Platzhalter beim allerersten Laden (noch kein Cache)
+    NSArray *_recentPlaylists;    // iPad: zuletzt gehörte Playlists [{id,name,cover}]
 }
 
 - (NSString *)greeting {
@@ -29,15 +32,16 @@
 }
 
 - (void)loadView {
-    self.view=[[UIView alloc] initWithFrame:[UIScreen mainScreen].bounds];
+    self.view=[[UIView alloc] initWithFrame:MMPageFrame(NO)];
     self.view.backgroundColor=[SpotTheme bg];
     _W=self.view.bounds.size.width;
 
     _greet=[[UILabel alloc] initWithFrame:CGRectMake(16,10,_W-32,30)];
+    _greet.autoresizingMask=UIViewAutoresizingFlexibleWidth;
     _greet.text=[self greeting]; _greet.font=[UIFont boldSystemFontOfSize:22]; _greet.textColor=[SpotTheme ink]; [self.view addSubview:_greet];
 
     _sc=[[UIScrollView alloc] initWithFrame:CGRectMake(0,46,_W,self.view.bounds.size.height-46)];
-    _sc.contentInset=UIEdgeInsetsMake(0,0,84,0); _sc.alwaysBounceVertical=YES;   // Platz für Now-Playing + Download-Leiste
+    _sc.contentInset=UIEdgeInsetsMake(0,0,MMPageBottomInset(84),0); _sc.alwaysBounceVertical=YES;   // Platz für Now-Playing + Download-Leiste
     _sc.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight; [self.view addSubview:_sc];
     _content=[[UIView alloc] initWithFrame:CGRectMake(0,0,_W,0)]; [_sc addSubview:_content];
     _y=8;
@@ -52,15 +56,22 @@
 - (void)netBack:(NSNotification *)n { if([n.userInfo[@"reachable"] boolValue]) [self loadAll]; }
 - (void)dealloc { [[NSNotificationCenter defaultCenter] removeObserver:self]; }
 
+// iPad gedreht: Breite übernehmen, Raster und Karussells neu aufbauen (die Daten bleiben)
+- (void)relayoutForSize:(CGSize)size {
+    _W=size.width;
+    if(_skel){ [_skel removeFromSuperview]; _skel=nil; [self showSkeleton]; }   // lädt noch: Umrisse in neuer Breite
+    else if(_recentTiles || _libTiles) [self mergeTiles];   // 6 oder 8 Kacheln, zeichnet neu
+    else [self render];
+}
 - (void)finish { _content.frame=CGRectMake(0,0,_W,_y+20); _sc.contentSize=CGSizeMake(_W,_y+20); }
 
 // Alle drei Bereiche laden parallel; jeder zeigt sofort die letzten Daten und wird bei Änderung neu gezeichnet.
 - (void)loadAll {
     // Kacheln wie in der Spotify-App: zuletzt gehörte Playlists, Alben und Artists; Lücken füllen eigene Playlists
-    [MMSpotify apiUserCached:@"me/recent-contexts?limit=6" completion:^(NSDictionary*j,NSInteger st,BOOL fresh){
+    [MMSpotify apiUserCached:@"me/recent-contexts?limit=8" completion:^(NSDictionary*j,NSInteger st,BOOL fresh){
         _serverCtx=[j[@"items"] isKindOfClass:[NSArray class]]?j[@"items"]:@[]; [self rebuildRecentTiles];
     }];
-    [MMSpotify apiUserCached:@"me/playlists?limit=6" completion:^(NSDictionary*j,NSInteger st,BOOL fresh){
+    [MMSpotify apiUserCached:@"me/playlists?limit=8" completion:^(NSDictionary*j,NSInteger st,BOOL fresh){
         NSMutableArray*q=[NSMutableArray arrayWithObject:[self likedTile]];
         for(NSDictionary*p in ([j[@"items"] isKindOfClass:[NSArray class]]?j[@"items"]:@[])){
             if(![p isKindOfClass:[NSDictionary class]]||![p[@"id"] isKindOfClass:[NSString class]]) continue;
@@ -71,6 +82,7 @@
     [MMSpotify apiUserCached:@"me/player/recently-played?limit=30" completion:^(NSDictionary*j,NSInteger st,BOOL fresh){
         _serverRecent=[self parseTracks:j[@"items"] dedupe:YES]; [self rebuildRecentTracks]; [self render];
     }];
+    [MMRecent playlists:20 done:^(NSArray*list){ _recentPlaylists=list; [self render]; }];
     [MMSpotify apiUserCached:@"me/top/tracks?limit=20&time_range=short_term" completion:^(NSDictionary*j,NSInteger st,BOOL fresh){
         _top=[self parseTracks:j[@"items"] dedupe:NO]; [self render];
     }];
@@ -86,7 +98,14 @@ static NSArray* byTime(NSArray*a,NSArray*b,NSString*(^key)(NSDictionary*),NSUInt
     for(NSDictionary*x in all){ NSString*k=key(x); if(!k||[seen containsObject:k]) continue; [seen addObject:k]; [out addObject:x]; if(out.count>=max) break; }
     return out;
 }
-- (void)historyChanged { [self rebuildRecentTiles]; [self rebuildRecentTracks]; [self render]; }
+- (void)historyChanged {   // pro Titel kommen zwei Meldungen (Titel + Herkunft): gebündelt einmal neu zeichnen
+    [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(historyChangedNow) object:nil];
+    [self performSelector:@selector(historyChangedNow) withObject:nil afterDelay:0.4];
+}
+- (void)historyChangedNow {
+    [self rebuildRecentTiles]; [self rebuildRecentTracks]; [self render];
+    [MMRecent playlists:20 done:^(NSArray*list){ _recentPlaylists=list; [self render]; }];
+}
 - (void)rebuildRecentTracks {
     if(!_serverRecent && ![MMHistory tracks].count) return;
     _recent=byTime([MMHistory tracks],_serverRecent?:@[],^NSString*(NSDictionary*x){ return x[@"id"]; },30);
@@ -100,7 +119,7 @@ static NSArray* byTime(NSArray*a,NSArray*b,NSString*(^key)(NSDictionary*),NSUInt
         if(![x isKindOfClass:[NSDictionary class]]) continue; NSString*k=keyOf(x);
         if(!img[k] && [MMCovers bestURL:x[@"images"]].length) img[k]=x[@"images"]; }
     NSMutableArray*ctx=[NSMutableArray array];
-    for(NSDictionary*x in byTime([MMHistory contexts],_serverCtx?:@[],keyOf,6)){
+    for(NSDictionary*x in byTime([MMHistory contexts],_serverCtx?:@[],keyOf,8)){
         NSDictionary*im=img[keyOf(x)];
         if(im && ![MMCovers bestURL:x[@"images"]].length){ NSMutableDictionary*m=[x mutableCopy]; m[@"images"]=im; [ctx addObject:m]; } else [ctx addObject:x]; }
     NSMutableArray*q=[NSMutableArray array];
@@ -115,6 +134,8 @@ static NSArray* byTime(NSArray*a,NSArray*b,NSString*(^key)(NSDictionary*),NSUInt
     }
     _recentTiles=q; [self mergeTiles];
 }
+// Kacheln oben: 6, auf dem iPad quer 8 (4 x 2)
+- (NSUInteger)tileMax { return (MMIsPad() && MMGridColumns(_W)>=4)?8:6; }
 - (NSDictionary *)likedTile { return @{@"name":L(@"Liked Songs"),@"path":@"me/tracks?market=from_token&limit=50",@"liked":@1}; }
 - (NSMutableDictionary *)playlistTile:(NSString *)pid name:(NSString *)name cover:(NSString *)cov {
     NSMutableDictionary*tile=[@{@"name":name,@"path":[NSString stringWithFormat:@"playlists/%@?market=from_token",pid],@"cover":cov} mutableCopy];
@@ -131,8 +152,8 @@ static NSArray* byTime(NSArray*a,NSArray*b,NSString*(^key)(NSDictionary*),NSUInt
     NSMutableArray*q=[NSMutableArray array]; NSMutableSet*seen=[NSMutableSet set];
     for(NSDictionary*t in [(_recentTiles?:@[]) arrayByAddingObjectsFromArray:_libTiles?:@[]]){
         NSString*key=t[@"path"]?:t[@"artistId"]; if(!key||[seen containsObject:key]) continue;
-        [seen addObject:key]; [q addObject:t]; if(q.count>=6) break; }
-    if(!_recentTiles && q.count<6) return;   // Verlauf steht noch aus und füllt evtl. noch
+        [seen addObject:key]; [q addObject:t]; if(q.count>=[self tileMax]) break; }
+    if(!_recentTiles && q.count<[self tileMax]) return;   // Verlauf steht noch aus und füllt evtl. noch
     _quick=q; [self render];
 }
 
@@ -142,9 +163,10 @@ static NSArray* byTime(NSArray*a,NSArray*b,NSString*(^key)(NSDictionary*),NSUInt
     _skel=[[UIView alloc] initWithFrame:CGRectMake(0,0,_W,700)]; _skel.userInteractionEnabled=NO;
     UIColor*c=[SpotTheme card];
     UIView*(^box)(CGRect,CGFloat)=^UIView*(CGRect r,CGFloat rad){ UIView*v=[[UIView alloc] initWithFrame:r]; v.backgroundColor=c; v.layer.cornerRadius=rad; [_skel addSubview:v]; return v; };
-    CGFloat gap=10, tileW=(_W-16*2-gap)/2, tileH=56, y=8;
-    for(int i=0;i<6;i++) box(CGRectMake(16+(i%2)*(tileW+gap), y+(i/2)*(tileH+gap), tileW, tileH), 4);
-    y+=3*(tileH+gap)+10;
+    NSInteger cols=MMGridColumns(_W), rows=(6+cols-1)/cols;
+    CGFloat gap=10, tileW=(_W-16*2-gap*(cols-1))/cols, tileH=56, y=8;
+    for(int i=0;i<6;i++) box(CGRectMake(16+(i%cols)*(tileW+gap), y+(i/cols)*(tileH+gap), tileW, tileH), 4);
+    y+=rows*(tileH+gap)+10;
     box(CGRectMake(16,y+4,150,18),4); y+=32;                       // Überschrift
     for(int i=0;i<3;i++){ CGFloat x=16+i*(128+14);                 // Karussell: Cover + zwei Textzeilen
         box(CGRectMake(x,y,128,128),4); box(CGRectMake(x,y+136,100,11),3); box(CGRectMake(x,y+153,64,9),3); }
@@ -163,21 +185,26 @@ static NSArray* byTime(NSArray*a,NSArray*b,NSString*(^key)(NSDictionary*),NSUInt
         [UIView animateWithDuration:0.3 animations:^{ sk.alpha=0; _content.alpha=1; } completion:^(BOOL f){ [sk removeFromSuperview]; }];
     }
     NSMutableDictionary*rowX=[NSMutableDictionary dictionary];
-    for(UIView*v in _content.subviews){ if(v.tag>=1 && v.tag<=2 && [v isKindOfClass:[UIScrollView class]]) rowX[@(v.tag)]=@(((UIScrollView*)v).contentOffset.x); }
+    for(UIView*v in _content.subviews){ if(v.tag>=1 && v.tag<=6 && [v isKindOfClass:[UIScrollView class]]) rowX[@(v.tag)]=@(((UIScrollView*)v).contentOffset.x); }
     for(UIView*v in [_content.subviews copy]) [v removeFromSuperview];
     _y=8;
     if(_quick.count) [self buildGrid];
-    if(_recent.count) [self addCarousel:L(@"Recently played") tracks:_recent section:1 offset:[rowX[@1] floatValue]];
+    // zuletzt gehörte Titel (Kacheln), Playlists, Alben und Artists (iPhone und iPad gleich)
+    if(_recent.count) [self addSongTiles:L(@"Recently played") offset:[rowX[@5] floatValue]];
+    if(_recentPlaylists.count) [self addCoverRow:L(@"Recent playlists") items:_recentPlaylists round:NO section:3 offset:[rowX[@3] floatValue]];
+    NSArray*albs=[self recentAlbums]; if(albs.count) [self addCoverRow:L(@"Recent albums") items:albs round:NO section:6 offset:[rowX[@6] floatValue]];
+    NSArray*arts=[self recentArtists]; if(arts.count) [self addCoverRow:L(@"Recent artists") items:arts round:YES section:4 offset:[rowX[@4] floatValue]];
     if(_top.count) [self addCarousel:L(@"Your top tracks") tracks:_top section:2 offset:[rowX[@2] floatValue]];
     [self finish];
 }
 
 // ---------- 1) Schnellzugriff-Grid (deine Playlists + Lieblingssongs) ----------
 - (void)buildGrid {
-    CGFloat gap=10, tileW=(_W-16*2-gap)/2, tileH=56;
+    NSInteger cols=MMGridColumns(_W);   // iPhone 2, iPad 3-4
+    CGFloat gap=10, tileW=(_W-16*2-gap*(cols-1))/cols, tileH=56;
     for(int i=0;i<(int)_quick.count;i++){
         NSDictionary*it=_quick[i];
-        CGFloat col=i%2, rowY=_y+(i/2)*(tileH+gap);
+        CGFloat col=i%cols, rowY=_y+(i/cols)*(tileH+gap);
         UIView*tile=[[UIView alloc] initWithFrame:CGRectMake(16+col*(tileW+gap),rowY,tileW,tileH)];
         tile.backgroundColor=[SpotTheme card]; tile.layer.cornerRadius=4; tile.clipsToBounds=YES;
         UIImageView*cov=[[UIImageView alloc] initWithFrame:CGRectMake(0,0,tileH,tileH)]; cov.contentMode=UIViewContentModeScaleAspectFill; cov.clipsToBounds=YES; cov.backgroundColor=[SpotTheme line]; [tile addSubview:cov];
@@ -187,7 +214,7 @@ static NSArray* byTime(NSArray*a,NSArray*b,NSString*(^key)(NSDictionary*),NSUInt
         UIButton*tap=[UIButton buttonWithType:UIButtonTypeCustom]; tap.frame=tile.bounds; tap.tag=i; [tap addTarget:self action:@selector(openQuick:) forControlEvents:UIControlEventTouchUpInside]; [tile addSubview:tap];
         [_content addSubview:tile];
     }
-    int rows=((int)_quick.count+1)/2; _y+=rows*(tileH+gap)+10;
+    int rows=((int)_quick.count+(int)cols-1)/(int)cols; _y+=rows*(tileH+gap)+10;
 }
 - (void)openQuick:(UIButton *)b {
     if(b.tag>=(int)_quick.count) return;
@@ -206,9 +233,10 @@ static NSArray* byTime(NSArray*a,NSArray*b,NSString*(^key)(NSDictionary*),NSUInt
         NSString*tid=[t[@"id"] isKindOfClass:[NSString class]]?t[@"id"]:nil; if(!tid) continue;
         if(dd){ if([seen containsObject:tid]) continue; [seen addObject:tid]; }
         NSString*nm=[t[@"name"] isKindOfClass:[NSString class]]?t[@"name"]:@"";
-        id arts=t[@"artists"]; NSString*an=@""; if([arts isKindOfClass:[NSArray class]]&&[arts count]){ id a0=arts[0]; if([a0 isKindOfClass:[NSDictionary class]]&&[a0[@"name"] isKindOfClass:[NSString class]]) an=a0[@"name"]; }
+        id arts=t[@"artists"]; NSString*an=@"", *aid=@""; if([arts isKindOfClass:[NSArray class]]&&[arts count]){ id a0=arts[0]; if([a0 isKindOfClass:[NSDictionary class]]&&[a0[@"name"] isKindOfClass:[NSString class]]) an=a0[@"name"];
+            if([a0 isKindOfClass:[NSDictionary class]]&&[a0[@"id"] isKindOfClass:[NSString class]]) aid=a0[@"id"]; }   // für "Zuletzt gehörte Artists" (iPad)
         id alb=t[@"album"]; NSString*cov=[alb isKindOfClass:[NSDictionary class]]?[MMCovers bestURL:alb[@"images"]]:@"";
-        NSMutableDictionary*e=[@{@"id":tid,@"title":nm,@"artist":an,@"cover":cov?:@""} mutableCopy];
+        NSMutableDictionary*e=[@{@"id":tid,@"title":nm,@"artist":an,@"artistId":aid,@"cover":cov?:@""} mutableCopy];
         if(((NSDictionary*)it)[@"at"]) e[@"at"]=((NSDictionary*)it)[@"at"];
         if([alb isKindOfClass:[NSDictionary class]] && [alb[@"id"] isKindOfClass:[NSString class]]){ e[@"albumId"]=alb[@"id"]; e[@"album"]=[alb[@"name"] isKindOfClass:[NSString class]]?alb[@"name"]:@""; }
         [out addObject:e];
@@ -236,10 +264,79 @@ static NSArray* byTime(NSArray*a,NSArray*b,NSString*(^key)(NSDictionary*),NSUInt
     row.contentOffset=CGPointMake(MAX(0,MIN(ox,x-_W)),0);
     _y+=tileH+18;
 }
+// ---------- iPad: Reihen unter den Kacheln ----------
+// Zuletzt gehörte Titel als Kacheln in Kachelgröße (Cover links, Titel + Artist); Antippen spielt den Titel
+- (void)addSongTiles:(NSString *)title offset:(CGFloat)ox {
+    UILabel*h=[[UILabel alloc] initWithFrame:CGRectMake(16,_y,_W-32,26)]; h.text=title; h.font=[UIFont boldSystemFontOfSize:18]; h.textColor=[SpotTheme ink]; [_content addSubview:h]; _y+=32;
+    NSInteger cols=MMGridColumns(_W); CGFloat gap=10, tileW=(_W-16*2-gap*(cols-1))/cols, tileH=56, x=16;
+    UIScrollView*row=[[UIScrollView alloc] initWithFrame:CGRectMake(0,_y,_W,tileH)]; row.showsHorizontalScrollIndicator=NO; row.tag=5; [_content addSubview:row];
+    for(int i=0;i<(int)_recent.count;i++){
+        NSDictionary*t=_recent[i];
+        UIView*tile=[[UIView alloc] initWithFrame:CGRectMake(x,0,tileW,tileH)]; tile.backgroundColor=[SpotTheme card]; tile.layer.cornerRadius=4; tile.clipsToBounds=YES;
+        UIImageView*cov=[[UIImageView alloc] initWithFrame:CGRectMake(0,0,tileH,tileH)]; cov.contentMode=UIViewContentModeScaleAspectFill; cov.clipsToBounds=YES; cov.backgroundColor=[SpotTheme line]; [tile addSubview:cov];
+        [MMCovers load:t[@"cover"] into:cov];
+        UILabel*ti=[[UILabel alloc] initWithFrame:CGRectMake(tileH+8,9,tileW-tileH-14,20)]; ti.text=t[@"title"]; ti.font=[UIFont boldSystemFontOfSize:12.5]; ti.textColor=[SpotTheme ink]; ti.backgroundColor=[UIColor clearColor]; [tile addSubview:ti];
+        UILabel*ar=[[UILabel alloc] initWithFrame:CGRectMake(tileH+8,28,tileW-tileH-14,18)]; ar.text=t[@"artist"]; ar.font=[UIFont systemFontOfSize:11]; ar.textColor=[SpotTheme muted]; ar.backgroundColor=[UIColor clearColor]; [tile addSubview:ar];
+        UIButton*tap=[UIButton buttonWithType:UIButtonTypeCustom]; tap.frame=tile.bounds; tap.tag=5000+i; [tap addTarget:self action:@selector(openRowItem:) forControlEvents:UIControlEventTouchUpInside]; [tile addSubview:tap];
+        UILongPressGestureRecognizer*lp=[[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(tileMenu:)]; lp.minimumPressDuration=0.45; [tap addGestureRecognizer:lp];
+        [row addSubview:tile]; x+=tileW+gap;
+    }
+    row.contentSize=CGSizeMake(x+6,tileH); row.contentOffset=CGPointMake(MAX(0,MIN(ox,x+6-_W)),0);
+    _y+=tileH+18;
+}
+// Je Artist ein Eintrag, an der Stelle seines neuesten Titels (Bild wird nachgeladen)
+- (NSArray *)recentArtists {
+    NSMutableArray*o=[NSMutableArray array]; NSMutableSet*seen=[NSMutableSet set];
+    for(NSDictionary*t in _recent){ NSString*aid=[t[@"artistId"] isKindOfClass:[NSString class]]?t[@"artistId"]:@"";
+        if(!aid.length || [seen containsObject:aid]) continue; [seen addObject:aid];
+        [o addObject:@{@"id":aid,@"name":t[@"artist"]?:@""}]; if(o.count>=20) break; }
+    return o;
+}
+// Je Album ein Eintrag, an der Stelle seines neuesten Titels (Cover = Cover des Titels)
+- (NSArray *)recentAlbums {
+    NSMutableArray*o=[NSMutableArray array]; NSMutableSet*seen=[NSMutableSet set];
+    for(NSDictionary*t in _recent){ NSString*al=[t[@"albumId"] isKindOfClass:[NSString class]]?t[@"albumId"]:@"";
+        if(!al.length || [seen containsObject:al]) continue; [seen addObject:al];
+        [o addObject:@{@"id":al,@"name":[t[@"album"] isKindOfClass:[NSString class]]?t[@"album"]:@"",@"cover":t[@"cover"]?:@""}]; if(o.count>=20) break; }
+    return o;
+}
+// Reihe mit großen Covern (wie "Zuletzt gehört" auf dem iPhone): Playlists (eckig) oder Artists (rund, Bild per MMRecent)
+- (void)addCoverRow:(NSString *)title items:(NSArray *)items round:(BOOL)round section:(int)sec offset:(CGFloat)ox {
+    UILabel*h=[[UILabel alloc] initWithFrame:CGRectMake(16,_y,_W-32,26)]; h.text=title; h.font=[UIFont boldSystemFontOfSize:18]; h.textColor=[SpotTheme ink]; [_content addSubview:h]; _y+=32;
+    CGFloat cw=128, pad=14, tileH=cw+(round?30:26), x=16;
+    UIScrollView*row=[[UIScrollView alloc] initWithFrame:CGRectMake(0,_y,_W,tileH)]; row.showsHorizontalScrollIndicator=NO; row.tag=sec; [_content addSubview:row];
+    for(int i=0;i<(int)items.count;i++){
+        NSDictionary*it=items[i];
+        UIView*tile=[[UIView alloc] initWithFrame:CGRectMake(x,0,cw,tileH)];
+        UIImageView*cov=[[UIImageView alloc] initWithFrame:CGRectMake(0,0,cw,cw)]; cov.contentMode=UIViewContentModeScaleAspectFill; cov.clipsToBounds=YES; cov.backgroundColor=[SpotTheme card];
+        cov.layer.cornerRadius=round?cw/2:4; [tile addSubview:cov];
+        if(round){ __weak UIImageView*wc=cov; [MMRecent artistImage:it[@"id"] done:^(NSString*u){ if(u.length && wc) [MMCovers load:u into:wc]; }]; }
+        else if([it[@"cover"] length]) [MMCovers load:it[@"cover"] into:cov];
+        else [MMCovers playlistCover:it[@"id"] completion:^(NSString*mu){ if(mu.length) [MMCovers load:mu into:cov]; }];   // ohne eigenes Bild: Mosaik
+        UILabel*ti=[[UILabel alloc] initWithFrame:CGRectMake(0,cw+6,cw,16)]; ti.text=it[@"name"]; ti.font=[UIFont boldSystemFontOfSize:12.5]; ti.textColor=[SpotTheme ink];
+        if(round) ti.textAlignment=NSTextAlignmentCenter; [tile addSubview:ti];
+        UIButton*tap=[UIButton buttonWithType:UIButtonTypeCustom]; tap.frame=tile.bounds; tap.tag=sec*1000+i; [tap addTarget:self action:@selector(openRowItem:) forControlEvents:UIControlEventTouchUpInside]; [tile addSubview:tap];
+        [row addSubview:tile]; x+=cw+pad;
+    }
+    row.contentSize=CGSizeMake(x,tileH); row.contentOffset=CGPointMake(MAX(0,MIN(ox,x-_W)),0);
+    _y+=tileH+18;
+}
+- (void)openRowItem:(UIButton *)b {
+    int sec=(int)b.tag/1000, idx=(int)b.tag%1000; MMRootController*root=[MMRootController shared];
+    if(sec==5){ if(idx<(int)_recent.count){ [root playList:_recent index:idx]; if(!MMIsPad()) [root openPlayer]; } return; }   // Titel spielen (iPad: die Leiste unten zeigt ihn)
+    if(sec==3 && idx<(int)_recentPlaylists.count){ NSDictionary*p=_recentPlaylists[idx];
+        [root pushContent:[[MMTrackListController alloc] initWithTitle:p[@"name"] path:[NSString stringWithFormat:@"playlists/%@?market=from_token",p[@"id"]]]]; return; }
+    NSArray*albs=[self recentAlbums];
+    if(sec==6 && idx<(int)albs.count){ NSDictionary*a=albs[idx];
+        [root pushContent:[[MMTrackListController alloc] initWithTitle:[a[@"name"] length]?a[@"name"]:L(@"Album") path:[@"albums/" stringByAppendingString:a[@"id"]]]]; return; }
+    NSArray*arts=[self recentArtists];
+    if(sec==4 && idx<(int)arts.count) [root pushContent:[[MMArtistController alloc] initWithArtistId:arts[idx][@"id"] name:arts[idx][@"name"]]];
+}
+
 - (void)tileMenu:(UILongPressGestureRecognizer *)g {
     if(g.state!=UIGestureRecognizerStateBegan) return;
     int sec=g.view.tag/1000, idx=g.view.tag%1000;
-    NSArray*list=(sec==1)?_recent:_top;
+    NSArray*list=(sec==1||sec==5)?_recent:_top;   // 5 = iPad-Titelkacheln
     if(idx<(int)list.count) [MMSongMenu showForTrack:list[idx]];
 }
 - (void)playTile:(UIButton *)b {
@@ -252,7 +349,7 @@ static NSArray* byTime(NSArray*a,NSArray*b,NSString*(^key)(NSDictionary*),NSUInt
         return;
     }
     [[MMRootController shared] playList:list index:idx];
-    [[MMRootController shared] openPlayer];
+    if(!MMIsPad()) [[MMRootController shared] openPlayer];   // iPad: nur abspielen, die Leiste unten zeigt den Titel
 }
 
 - (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; _greet.text=[self greeting]; }

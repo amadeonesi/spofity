@@ -161,7 +161,8 @@ icon.alpha_composite(tg)
 
 out = sys.argv[1]
 icon = icon.convert("RGB")  # iOS 6 masks the corners itself (UIPrerenderedIcon: no extra system gloss)
-for name, px in [("Icon.png", 57), ("Icon@2x.png", 114), ("Icon-Small.png", 29), ("Icon-Small@2x.png", 58)]:
+for name, px in [("Icon.png", 57), ("Icon@2x.png", 114), ("Icon-Small.png", 29), ("Icon-Small@2x.png", 58),
+                 ("Icon-72.png", 72), ("Icon-72@2x.png", 144), ("Icon-Small-50.png", 50), ("Icon-Small-50@2x.png", 100)]:   # iPad
     icon.resize((px, px), Image.LANCZOS).save(f"{out}/{name}")
 if len(sys.argv) > 2:
     icon.resize((512, 512), Image.LANCZOS).save(sys.argv[2])

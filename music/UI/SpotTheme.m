@@ -28,8 +28,10 @@ static UIColor* rgb(int r,int g,int b){ return [UIColor colorWithRed:r/255.0 gre
     UIImage*img=UIGraphicsGetImageFromCurrentImageContext(); UIGraphicsEndImageContext(); return img;
 }
 + (void)spaced:(UILabel *)label text:(NSString *)text font:(UIFont *)font color:(UIColor *)color kern:(CGFloat)kern {
-    if ([label respondsToSelector:@selector(setAttributedText:)]) {
+    if ([label respondsToSelector:@selector(setAttributedText:)]) {   // iOS 6; iOS 5: schlichter Text ohne Laufweite
+        MM_IOS6_BEGIN
         label.attributedText = [[NSAttributedString alloc] initWithString:text ?: @"" attributes:@{NSKernAttributeName:@(kern), NSFontAttributeName:font, NSForegroundColorAttributeName:color}];
+        MM_IOS6_END
     } else { label.text = text; label.font = font; label.textColor = color; }
 }
 + (void)styleBackButton:(UIButton *)b {
@@ -65,5 +67,43 @@ static UIColor* rgb(int r,int g,int b){ return [UIColor colorWithRed:r/255.0 gre
     [p moveToPoint:CGPointMake(24*k,13*k)]; [p addLineToPoint:CGPointMake(24*k,32*k)]; [p moveToPoint:CGPointMake(16*k,25*k)]; [p addLineToPoint:CGPointMake(24*k,33*k)]; [p addLineToPoint:CGPointMake(32*k,25*k)];
     [p moveToPoint:CGPointMake(15*k,37*k)]; [p addLineToPoint:CGPointMake(33*k,37*k)]; [p stroke];
     m=UIGraphicsGetImageFromCurrentImageContext(); UIGraphicsEndImageContext(); memo[@(S)]=m; return m;
+}
+// Spotify-Symbol Zufall: zwei gekreuzte Pfeile; an = grün + Punkt darunter (44x44, Player und iPad-Leiste)
++ (UIImage *)shuffleIcon:(BOOL)on {
+    CGFloat B=44, sz=22, o=11;
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(B,B),NO,0);
+    UIColor*col=on?[SpotTheme green]:[SpotTheme muted]; [col setStroke]; [col setFill];
+    UIBezierPath*p=[UIBezierPath bezierPath]; p.lineWidth=2; p.lineCapStyle=kCGLineCapRound; p.lineJoinStyle=kCGLineJoinRound;
+    #define P(x,y) CGPointMake(o+sz*(x),o+sz*(y))
+    [p moveToPoint:P(0.05,0.25)]; [p addCurveToPoint:P(0.9,0.75) controlPoint1:P(0.5,0.25) controlPoint2:P(0.45,0.75)];
+    [p moveToPoint:P(0.05,0.75)]; [p addCurveToPoint:P(0.9,0.25) controlPoint1:P(0.5,0.75) controlPoint2:P(0.45,0.25)];
+    [p moveToPoint:P(0.74,0.1)];  [p addLineToPoint:P(0.92,0.25)]; [p addLineToPoint:P(0.74,0.4)];
+    [p moveToPoint:P(0.74,0.6)];  [p addLineToPoint:P(0.92,0.75)]; [p addLineToPoint:P(0.74,0.9)];
+    [p stroke];
+    if(on) [[UIBezierPath bezierPathWithOvalInRect:CGRectMake(B/2-2,o+sz+5,4,4)] fill];
+    #undef P
+    UIImage*img=UIGraphicsGetImageFromCurrentImageContext(); UIGraphicsEndImageContext(); return img;
+}
+// Spotify-Symbol Wiederholen: Schleife mit Pfeil; an = grün + Punkt, "Titel wiederholen" (mode 2) zusätzlich mit kleiner 1
++ (UIImage *)repeatIcon:(NSInteger)mode {
+    NSInteger m=mode; CGFloat B=44, sz=22, o=11;
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(B,B),NO,0);
+    UIColor*col=m?[SpotTheme green]:[SpotTheme muted]; [col setStroke]; [col setFill];
+    UIBezierPath*p=[UIBezierPath bezierPath]; p.lineWidth=2; p.lineCapStyle=kCGLineCapRound; p.lineJoinStyle=kCGLineJoinRound;
+    #define P(x,y) CGPointMake(o+sz*(x),o+sz*(y))
+    // oben: von links unten hoch, nach rechts, Pfeil nach rechts
+    [p moveToPoint:P(0.08,0.56)]; [p addLineToPoint:P(0.08,0.42)]; [p addQuadCurveToPoint:P(0.25,0.25) controlPoint:P(0.08,0.25)];
+    [p addLineToPoint:P(0.88,0.25)]; [p moveToPoint:P(0.74,0.12)]; [p addLineToPoint:P(0.88,0.25)]; [p addLineToPoint:P(0.74,0.38)];
+    // unten: von rechts oben runter, nach links, Pfeil nach links
+    [p moveToPoint:P(0.92,0.44)]; [p addLineToPoint:P(0.92,0.58)]; [p addQuadCurveToPoint:P(0.75,0.75) controlPoint:P(0.92,0.75)];
+    [p addLineToPoint:P(0.12,0.75)]; [p moveToPoint:P(0.26,0.62)]; [p addLineToPoint:P(0.12,0.75)]; [p addLineToPoint:P(0.26,0.88)];
+    [p stroke];
+    #undef P
+    if(m==2){   // kleine "1" in der Mitte
+        NSString*one=@"1"; UIFont*f=[UIFont boldSystemFontOfSize:9]; CGSize ts=[one sizeWithFont:f];
+        [one drawAtPoint:CGPointMake(o+sz/2-ts.width/2,o+sz/2-ts.height/2+1) withFont:f];
+    }
+    if(m) [[UIBezierPath bezierPathWithOvalInRect:CGRectMake(B/2-2,o+sz+5,4,4)] fill];
+    UIImage*img=UIGraphicsGetImageFromCurrentImageContext(); UIGraphicsEndImageContext(); return img;
 }
 @end

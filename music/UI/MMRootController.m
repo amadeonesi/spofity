@@ -14,46 +14,18 @@
 #import "MeshL10n.h"
 #import "MMHistory.h"
 #import "MMQueueController.h"
+#import "MMLayout.h"
+#import "MMPadSidebar.h"
+#import "MMPadPlayerBar.h"
+#import "MMTrackListController.h"
+#import "MMSettingsController.h"
 #import <MediaPlayer/MediaPlayer.h>
 #import <AVFoundation/AVFoundation.h>
 
-// ---- Tab-Icons (schlichte Linien-Icons wie Spotify) ----
-static UIImage *MMTabIcon(NSString *name, UIColor *c, CGFloat s) {
-    UIGraphicsBeginImageContextWithOptions(CGSizeMake(s, s), NO, 0);
-    CGContextRef ctx = UIGraphicsGetCurrentContext();
-    [c setStroke]; [c setFill];
-    UIBezierPath *p = [UIBezierPath bezierPath]; p.lineWidth = s*0.075f; p.lineJoinStyle = kCGLineJoinRound; p.lineCapStyle = kCGLineCapRound;
-    if ([name isEqualToString:@"home"]) {
-        [p moveToPoint:CGPointMake(s*0.5,s*0.16)]; [p addLineToPoint:CGPointMake(s*0.85,s*0.46)];
-        [p moveToPoint:CGPointMake(s*0.5,s*0.16)]; [p addLineToPoint:CGPointMake(s*0.15,s*0.46)];
-        UIBezierPath *b=[UIBezierPath bezierPathWithRect:CGRectMake(s*0.26,s*0.44,s*0.48,s*0.4)]; [p appendPath:b]; [p stroke];
-    } else if ([name isEqualToString:@"browse"]) {
-        CGFloat g=s*0.1, w=s*0.3;
-        for(int i=0;i<2;i++)for(int j=0;j<2;j++){ [[UIBezierPath bezierPathWithRoundedRect:CGRectMake(s*0.2+j*(w+g),s*0.2+i*(w+g),w,w) cornerRadius:s*0.03] stroke]; }
-    } else if ([name isEqualToString:@"search"]) {
-        [[UIBezierPath bezierPathWithOvalInRect:CGRectMake(s*0.22,s*0.22,s*0.4,s*0.4)] stroke];
-        [p moveToPoint:CGPointMake(s*0.6,s*0.6)]; [p addLineToPoint:CGPointMake(s*0.8,s*0.8)]; [p stroke];
-    } else if ([name isEqualToString:@"radio"]) {
-        // zentriertes Broadcast-Symbol: Punkt in der Mitte + symmetrische Bögen links UND rechts
-        // (vorher nur oben-rechts -> Schwerpunkt saß schief/höher als die anderen Icons)
-        CGContextAddEllipseInRect(ctx, CGRectMake(s*0.44,s*0.44,s*0.12,s*0.12)); CGContextFillPath(ctx);
-        for(int i=1;i<=2;i++){
-            CGFloat r=s*0.14*i+s*0.03;
-            UIBezierPath*rt=[UIBezierPath bezierPathWithArcCenter:CGPointMake(s*0.5,s*0.5) radius:r startAngle:-M_PI/4 endAngle:M_PI/4 clockwise:YES]; rt.lineWidth=s*0.07; rt.lineCapStyle=kCGLineCapRound; [rt stroke];
-            UIBezierPath*lf=[UIBezierPath bezierPathWithArcCenter:CGPointMake(s*0.5,s*0.5) radius:r startAngle:M_PI-M_PI/4 endAngle:M_PI+M_PI/4 clockwise:YES]; lf.lineWidth=s*0.07; lf.lineCapStyle=kCGLineCapRound; [lf stroke];
-        }
-    } else { // library
-        [p moveToPoint:CGPointMake(s*0.3,s*0.2)];[p addLineToPoint:CGPointMake(s*0.3,s*0.8)];
-        [p moveToPoint:CGPointMake(s*0.45,s*0.2)];[p addLineToPoint:CGPointMake(s*0.45,s*0.8)];
-        [p stroke];
-        UIBezierPath*bar=[UIBezierPath bezierPathWithRect:CGRectMake(s*0.58,s*0.22,s*0.14,s*0.58)]; [[UIColor clearColor] setFill];
-        CGContextSaveGState(ctx); CGContextTranslateCTM(ctx,s*0.66,s*0.5); CGContextRotateCTM(ctx,0.26); CGContextTranslateCTM(ctx,-s*0.66,-s*0.5);
-        [bar stroke]; CGContextRestoreGState(ctx);
-    }
-    UIImage *img=UIGraphicsGetImageFromCurrentImageContext(); UIGraphicsEndImageContext(); return img;
-}
-
 static MMRootController *gRoot;
+
+@interface MMRootController () <AVAudioSessionDelegate>   // iOS 5: Unterbrechungen kommen über den Session-Delegate
+@end
 
 @implementation MMRootController {
     UIView *_content, *_tabBar, *_npBar, *_npCover;
@@ -79,11 +51,106 @@ static MMRootController *gRoot;
     NSMutableArray *_pushedStack;                 // im Inhaltsbereich geöffnete Ansichten (Titelliste, Artist, Album …), oberste zuletzt
     NSString *_curAlbumId, *_curAlbum, *_curArtistId;   // zum aktuellen Titel (aus den Metadaten), für Album-/Artist-Seite
     CGFloat _tabH, _npH;
+    MMPadSidebar *_sidebar; MMPadPlayerBar *_padBar;   // iPad: Seitenleiste + Player-Leiste (statt Tab- und Now-Playing-Leiste)
+    BOOL _loading;                                     // Titel lädt (Kreisel statt Play)
+    MMQueueController *_queueDock; UIView *_queueEdge;
+    UIView *_npLoad;                                   // iPhone: grüne Ladelinie oben an der Now-Playing-Leiste  // iPad quer: Warteschlange als Spalte rechts (Inhalt wird schmaler)
 }
 + (instancetype)shared { return gRoot; }
 // Volle Bildschirmhöhe: die Statusleiste liegt über den oberen 20 pt (Inhalt beginnt darunter).
 // So ändert Ein-/Ausblenden der Statusleiste (iPod-Modus, Cover Flow) nie das Layout.
 - (id)init { if((self=[super init])) self.wantsFullScreenLayout=YES; return self; }
+// Drehen: iPad in alle Richtungen (das ganze Layout dreht mit), iPhone bleibt hochkant (quer = Cover Flow, siehe orientationChanged)
+- (BOOL)shouldAutorotateToInterfaceOrientation:(UIInterfaceOrientation)o { return MMShouldAutorotate(o); }   // iOS 5
+- (BOOL)shouldAutorotate { return MMIsPad(); }                                                                 // iOS 6
+MM_IOS6_BEGIN
+- (UIInterfaceOrientationMask)supportedInterfaceOrientations { return (UIInterfaceOrientationMask)MMSupportedOrientations(); }
+MM_IOS6_END
+- (CGRect)contentBounds { return _content.bounds; }
+
+// ---- iPad: Seitenleiste links, Inhalt rechts daneben, Player-Leiste unten über die ganze Breite ----
+- (void)buildPadShell {
+    _sidebar=[[MMPadSidebar alloc] initWithFrame:CGRectMake(0,MMStatusH,MMPadSidebarW,self.view.bounds.size.height-MMStatusH-MMPadBarH)];
+    __weak MMRootController*ws=self; _sidebar.onSelect=^(NSString*key){ [ws sidebarSelect:key]; };
+    [_sidebar setShowsCoverFlow:[MMRootController coverFlowOnRotate]];   // iPad: dieselbe Einstellung blendet den Eintrag aus
+    [self.view addSubview:_sidebar];
+    _padBar=[[MMPadPlayerBar alloc] initWithFrame:CGRectMake(0,self.view.bounds.size.height-MMPadBarH,self.view.bounds.size.width,MMPadBarH)];
+    [self.view addSubview:_padBar];
+    // Cover groß in die Seitenleiste und zurück (bleibt über Neustarts gemerkt)
+    _padBar.onCoverToSidebar=^{ [ws setCoverInSidebar:YES]; };
+    _sidebar.onCoverBack=^{ [ws setCoverInSidebar:NO]; };
+    [self layoutPad];
+}
+- (BOOL)coverInSidebar { return [[NSUserDefaults standardUserDefaults] boolForKey:@"padCoverInSidebar"]; }
+- (void)setCoverInSidebar:(BOOL)on {
+    if(on && !_curCover.length) return;   // nichts geladen: kein leeres Feld in die Seitenleiste
+    [[NSUserDefaults standardUserDefaults] setBool:on forKey:@"padCoverInSidebar"];
+    [_padBar setCoverHidden:on];
+    if(on) [_sidebar showCover:_curCover animated:YES]; else [_sidebar hideCoverAnimated:YES];
+}
+// ---- iPad quer: Warteschlange schiebt sich von rechts als Spalte herein, der Inhalt rückt zusammen ----
+#define MMQueueDockW 320
+- (void)toggleQueueDock {
+    if(_queueDock){ [self closeQueueDock]; return; }
+    MMQueueController*q=[[MMQueueController alloc] init];
+    __weak MMRootController*ws=self; q.onClose=^{ [ws closeQueueDock]; };
+    [self addChildViewController:q];
+    CGFloat W=self.view.bounds.size.width, ch=self.view.bounds.size.height-MMStatusH-MMPadBarH;
+    q.view.frame=CGRectMake(W,MMStatusH,MMQueueDockW,ch);   // startet rechts außerhalb
+    _queueEdge=[[UIView alloc] initWithFrame:CGRectMake(0,0,1,ch)]; _queueEdge.backgroundColor=[SpotTheme line];
+    _queueEdge.autoresizingMask=UIViewAutoresizingFlexibleHeight; [q.view addSubview:_queueEdge];
+    [q viewWillAppear:YES]; [self.view addSubview:q.view]; [q didMoveToParentViewController:self];
+    _queueDock=q;
+    [UIView animateWithDuration:0.3 animations:^{ [self layoutPad]; }];
+}
+- (void)closeQueueDock {
+    MMQueueController*q=_queueDock; if(!q) return; _queueDock=nil;
+    [q willMoveToParentViewController:nil];
+    [UIView animateWithDuration:0.3 animations:^{ [self layoutPad]; q.view.frame=CGRectOffset(q.view.frame,MMQueueDockW,0); }
+                     completion:^(BOOL f){ [q.view removeFromSuperview]; [q removeFromParentViewController]; }];
+}
+- (void)layoutPad {
+    CGFloat W=self.view.bounds.size.width, H=self.view.bounds.size.height, ch=H-MMStatusH-MMPadBarH;
+    if(_queueDock && W<H){ [self closeQueueDock]; return; }   // hochkant ist kein Platz für zwei Spalten
+    CGFloat dock=_queueDock?MMQueueDockW:0;
+    _sidebar.frame=CGRectMake(0,MMStatusH,MMPadSidebarW,ch);
+    _content.frame=CGRectMake(MMPadSidebarW,MMStatusH,W-MMPadSidebarW-dock,ch);
+    if(_queueDock) _queueDock.view.frame=CGRectMake(W-dock,MMStatusH,dock,ch);
+    _padBar.frame=CGRectMake(0,H-MMPadBarH,W,MMPadBarH);
+    if(!_dlBar.hidden) [self layoutDlBar];
+    [self placePadCoverFlow];
+    if(_vcs.count) [self fitPage:_vcs[_sel]];
+    for(UIViewController*vc in _pushedStack) [self fitPage:vc];
+}
+// Seite auf den Inhaltsbereich setzen; hat sich die Breite geändert (iPad gedreht), baut sie ihren Inhalt neu auf
+- (void)fitPage:(UIViewController *)vc {
+    BOOL wider=vc.isViewLoaded && vc.view.bounds.size.width!=_content.bounds.size.width;
+    vc.view.frame=_content.bounds;
+    if(wider && [vc respondsToSelector:@selector(relayoutForSize:)]) [(id<MMRelayout>)vc relayoutForSize:_content.bounds.size];
+}
+- (void)viewWillLayoutSubviews { [super viewWillLayoutSubviews]; if(MMIsPad()) [self layoutPad]; }   // auch nach dem Drehen
+// Unter dem Vollbild-Player gedreht: beim Zurückkommen gibt es nicht immer einen eigenen Layout-Durchgang -> selbst neu anordnen
+- (void)viewWillAppear:(BOOL)a { [super viewWillAppear:a]; if(MMIsPad()) [self layoutPad]; }
+- (void)viewDidAppear:(BOOL)a { [super viewDidAppear:a]; if(MMIsPad()) [self layoutPad]; }
+- (void)padBarRefresh {
+    [_queueDock reload];
+    [_padBar showTitle:_curTitle artist:_curArtist coverURL:_curCover];
+    if(_sidebar && [self coverInSidebar] && _curCover.length){ [_padBar setCoverHidden:YES]; [_sidebar showCover:_curCover animated:NO]; }
+    [_padBar setPlaying:[MMAudio isPlaying] loading:_loading];
+}
+- (void)sidebarSelect:(NSString *)key {
+    if(self.presentedViewController) [self dismissViewControllerAnimated:NO completion:nil];
+    NSUInteger tab=[_tabs indexOfObject:key];
+    if(tab!=NSNotFound){ [self selectTab:tab]; return; }
+    if([key isEqualToString:@"coverflow"]){ [self showCoverFlow]; return; }
+    UIViewController*vc=nil;
+    if([key isEqualToString:@"settings"]) vc=[[MMSettingsController alloc] init];
+    else if([key isEqualToString:@"liked"]) vc=[[MMTrackListController alloc] initWithTitle:L(@"Liked Songs") path:@"me/tracks?market=from_token&limit=50"];
+    else if([key hasPrefix:@"playlist:"]) vc=[[MMTrackListController alloc] initWithTitle:[_sidebar nameForKey:key]?:L(@"Playlist")
+                                                      path:[NSString stringWithFormat:@"playlists/%@?market=from_token",[key substringFromIndex:9]]];
+    if(!vc) return;
+    [self popContentImmediate]; [self pushContent:vc]; [_sidebar setSelectedKey:key];
+}
 
 // Abmelden: alles vom Konto löschen und Spotify6 beenden. Beenden ist Absicht: so bleibt garantiert nichts vom alten
 // Konto im Speicher (Cover, Listen, Warteschlange); beim nächsten Öffnen kommt die Anmeldung.
@@ -129,9 +196,14 @@ static MMRootController *gRoot;
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(dlDone:) name:@"MMDownloadDone" object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(dlFull:) name:@"MMDownloadFull" object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(dlError:) name:@"MMDownloadError" object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(trackLoadProgress:) name:MMTrackLoadProgress object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(streamFailed) name:@"MMAudioStreamFailed" object:nil];
     // Auto/Bluetooth: Fernsteuer-Tasten + Unterbrechungen (sonst „streitet" es mit der Stock-Musik-App)
     [[UIApplication sharedApplication] beginReceivingRemoteControlEvents];
-    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(audioInterruption:) name:AVAudioSessionInterruptionNotification object:nil];
+    MM_IOS6_BEGIN
+    if(&AVAudioSessionInterruptionNotification) [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(audioInterruption:) name:AVAudioSessionInterruptionNotification object:nil];
+    else [AVAudioSession sharedInstance].delegate=self;   // iOS 5 (Notification gibt es erst ab 6; der Delegate ist dort veraltet)
+    MM_IOS6_END
     self.view = [[UIView alloc] initWithFrame:[UIScreen mainScreen].bounds];
     self.view.backgroundColor = [SpotTheme bg];
     CGFloat W=self.view.bounds.size.width, H=self.view.bounds.size.height;
@@ -146,6 +218,7 @@ static MMRootController *gRoot;
     _vcs=[NSMutableArray arrayWithObjects:[[MMStartController alloc] init],[[MMBrowseController alloc] init],[[MMSearchController alloc] init],[[MMLibraryController alloc] init],nil];
     _pushedStack=[NSMutableArray array];
 
+    if(!MMIsPad()){   // iPhone: Now-Playing-Leiste (iPad: Player-Leiste, siehe buildPadShell)
     // Now-Playing-Leiste
     _npBar=[[UIView alloc] initWithFrame:CGRectMake(0,H-tabH-npH,W,npH)];
     _npBar.backgroundColor=[UIColor colorWithRed:0.14 green:0.14 blue:0.16 alpha:1];
@@ -166,12 +239,14 @@ static MMRootController *gRoot;
     [_npBar addSubview:_npPlay];
     _npSpinner=[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleWhite];
     _npSpinner.frame=CGRectMake(W-44,8,36,36); _npSpinner.hidesWhenStopped=YES; [_npBar addSubview:_npSpinner];
+    _npLoad=[[UIView alloc] initWithFrame:CGRectMake(0,0,0,2)]; _npLoad.backgroundColor=[SpotTheme green]; _npLoad.hidden=YES; [_npBar addSubview:_npLoad];
     _npBar.hidden=YES; _npBar.clipsToBounds=YES;
     [self.view addSubview:_npBar];
     // waagrecht wischen: Cover + Titel folgen dem Finger; nach links = nächster, nach rechts = vorheriger Titel (Play-Knopf bleibt stehen)
     UIPanGestureRecognizer*npSwipe=[[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(npSwipe:)];
     npSwipe.delegate=(id<UIGestureRecognizerDelegate>)self; [_npBar addGestureRecognizer:npSwipe];
 
+    }
     // globale Offline-Download-Leiste - immer sichtbar wenn aktiv, direkt über der Now-Playing-Leiste
     _dlBar=[[UIView alloc] initWithFrame:CGRectMake(0,H-tabH-npH-24,W,24)];
     _dlBar.backgroundColor=[UIColor colorWithRed:0.10 green:0.10 blue:0.11 alpha:1];
@@ -179,6 +254,7 @@ static MMRootController *gRoot;
     _dlProg=[[UIView alloc] initWithFrame:CGRectMake(0,22,0,2)]; _dlProg.backgroundColor=[SpotTheme green]; [_dlBar addSubview:_dlProg];
     _dlBar.hidden=YES; [self.view addSubview:_dlBar];
 
+    if(!MMIsPad()){
     // Tab-Leiste
     _tabBar=[[UIView alloc] initWithFrame:CGRectMake(0,H-tabH,W,tabH)];
     _tabBar.backgroundColor=[SpotTheme bar];
@@ -192,6 +268,7 @@ static MMRootController *gRoot;
         [_tabBar addSubview:b]; [_tabBtns addObject:b];
     }
     [self.view addSubview:_tabBar];
+    } else [self buildPadShell];
     [self selectTab:0];
     [self restoreState];
     [MMSpotify startNetworkWatch];
@@ -268,7 +345,8 @@ static MMRootController *gRoot;
     [self popContentImmediate];   // offene Playlist schließen beim Tab-Wechsel
     [[_vcs[_sel] view] removeFromSuperview];
     _sel=idx;
-    UIViewController*vc=_vcs[idx]; vc.view.frame=_content.bounds; [_content addSubview:vc.view];
+    UIViewController*vc=_vcs[idx]; [self fitPage:vc]; [_content addSubview:vc.view];
+    [_sidebar setSelectedKey:_tabs[idx]];
     for(NSUInteger i=0;i<_tabBtns.count;i++){ UIButton*b=_tabBtns[i]; UIColor*c=((NSInteger)i==idx)?[SpotTheme ink]:[SpotTheme faint];
         ((UIImageView*)[b viewWithTag:99]).image=MMTabIcon(_tabs[i],c,24);
         ((UILabel*)[b viewWithTag:98]).textColor=c; }
@@ -291,13 +369,34 @@ static MMRootController *gRoot;
         default: break;
     }
 }
-- (void)audioInterruption:(NSNotification *)n {
+- (void)audioInterruption:(NSNotification *)n {   // iOS 6 (nur dort registriert)
+    MM_IOS6_BEGIN
     NSInteger type=[n.userInfo[AVAudioSessionInterruptionTypeKey] integerValue];
-    if(type==AVAudioSessionInterruptionTypeBegan){ [MMAudio setPaused:YES]; [self drawNpPlay]; [self updateNowPlaying]; }
-    else { NSInteger opt=[n.userInfo[AVAudioSessionInterruptionOptionKey] integerValue];
-        if(opt & AVAudioSessionInterruptionOptionShouldResume){ [MMAudio setPaused:NO]; [self drawNpPlay]; [self updateNowPlaying]; } }
+    if(type==AVAudioSessionInterruptionTypeBegan) [self interruptionBegan];
+    else [self interruptionEndedResume:([n.userInfo[AVAudioSessionInterruptionOptionKey] integerValue] & AVAudioSessionInterruptionOptionShouldResume)!=0];
+    MM_IOS6_END
+}
+- (void)beginInterruption { [self interruptionBegan]; }   // iOS 5
+- (void)endInterruptionWithFlags:(NSUInteger)flags { [self interruptionEndedResume:(flags & AVAudioSessionInterruptionFlags_ShouldResume)!=0]; }
+- (void)interruptionBegan { [MMAudio setPaused:YES]; [self drawNpPlay]; [self updateNowPlaying]; }
+- (void)interruptionEndedResume:(BOOL)resume { if(resume){ [MMAudio setPaused:NO]; [self drawNpPlay]; [self updateNowPlaying]; } }
+// Angetippter Titel lädt: wie weit er da ist (grün in der Leiste und im Player); -1 = fertig/aus
+- (void)trackLoadProgress:(NSNotification *)n {
+    if(![n.userInfo[@"id"] isEqual:_curId]) return;   // auch während er schon spielt (Wiedergabe während des Downloads)
+    double f=[n.userInfo[@"frac"] doubleValue];
+    [self showLoadProgress:(f>=1 && !_loading)?-1:f];   // ganz geladen und spielt: Balken weg
+}
+// Download brach ab, während der Titel schon spielte: am Ende des Geladenen stehen bleiben und Bescheid geben
+- (void)streamFailed {
+    [self showLoadProgress:-1]; [self drawNpPlay]; [self updateNowPlaying];
+    [self showPlayError:@"CDN"];
+}
+- (void)showLoadProgress:(double)f {
+    _npLoad.hidden=(f<0); if(f>=0) _npLoad.frame=CGRectMake(0,0,_npBar.bounds.size.width*MIN(1,f),2);
+    [_padBar setLoadProgress:f]; [_player setLoadProgress:f];
 }
 - (void)updateNowPlaying {
+    [self padBarRefresh];
     NSMutableDictionary*info=[NSMutableDictionary dictionary];
     if(_curTitle) info[MPMediaItemPropertyTitle]=_curTitle;
     if(_curArtist) info[MPMediaItemPropertyArtist]=_curArtist;
@@ -338,6 +437,7 @@ static MMRootController *gRoot;
 }
 - (void)popContent {
     UIViewController*vc=[_pushedStack lastObject]; if(!vc)return; [_pushedStack removeLastObject];
+    if(!_pushedStack.count) [_sidebar setSelectedKey:_tabs[_sel]];
     [UIView animateWithDuration:0.25 animations:^{ vc.view.frame=CGRectOffset(vc.view.frame,vc.view.frame.size.width,0); }
                      completion:^(BOOL x){ [vc.view removeFromSuperview]; }];
 }
@@ -347,8 +447,9 @@ static MMRootController *gRoot;
 - (void)layoutDlBar {
     CGFloat W=self.view.bounds.size.width, H=self.view.bounds.size.height;
     CGFloat top = _npBar.hidden ? (H-_tabH) : _npBar.frame.origin.y;   // direkt über Now-Playing (oder Tab-Leiste)
-    CGFloat h=_dlCompact?2:24;
-    _dlBar.frame=CGRectMake(0, top-h, W, h); _dlLbl.hidden=_dlCompact;
+    CGFloat h=_dlCompact?2:24, x=0;
+    if(MMIsPad()){ top=H-MMPadBarH; x=MMPadSidebarW; W-=x; }   // iPad: über der Player-Leiste, nur über dem Inhalt
+    _dlBar.frame=CGRectMake(x, top-h, W, h); _dlLbl.frame=CGRectMake(12,0,W-24,22); _dlLbl.hidden=_dlCompact;
     CGRect pf=_dlProg.frame; pf.origin.y=h-2; _dlProg.frame=pf;
     [self.view bringSubviewToFront:_dlBar];
     [self keepOverlaysOnTop];
@@ -360,19 +461,20 @@ static MMRootController *gRoot;
     if(_dlBar.hidden) _dlSince=now;
     _dlCompact=(now-_dlSince>6);                       // Text nur am Anfang, dann dezente Linie
     _dlLbl.text=LF(@"↓  Saving … %ld of %ld",(long)done,(long)total);
-    _dlProg.frame=CGRectMake(0,0, self.view.bounds.size.width*(total>0?(CGFloat)done/total:0), 2);
+    _dlProg.frame=CGRectMake(0,0, [self dlWidth]*(total>0?(CGFloat)done/total:0), 2);
     [self layoutDlBar]; _dlBar.hidden=NO;
 }
 - (void)showDownloadMessage:(NSString *)msg {
     if(_cflow) return;
     [NSObject cancelPreviousPerformRequestsWithTarget:self selector:@selector(hideDownloadBar) object:nil];
     _dlCompact=NO; _dlLbl.text=msg;
-    _dlProg.frame=CGRectMake(0,0, self.view.bounds.size.width, 2);
+    _dlProg.frame=CGRectMake(0,0, [self dlWidth], 2);
     [self layoutDlBar]; _dlBar.hidden=NO;
     [self performSelector:@selector(hideDownloadBar) withObject:nil afterDelay:2.5];
 }
+- (CGFloat)dlWidth { return self.view.bounds.size.width-(MMIsPad()?MMPadSidebarW:0); }
 - (void)hideDownloadBar { _dlBar.hidden=YES; _dlCompact=NO; }
-- (CGFloat)bottomBarsHeight { return (_npBar.hidden?0:_npH) + (_dlBar.hidden?0:_dlBar.frame.size.height); }
+- (CGFloat)bottomBarsHeight { return (MMIsPad()||_npBar.hidden?0:_npH) + (_dlBar.hidden?0:_dlBar.frame.size.height); }   // iPad: Player-Leiste liegt nicht über dem Inhalt
 - (void)dlProgress:(NSNotification *)n { NSInteger t=[n.userInfo[@"total"] integerValue]; if(t>0) [self showDownloadProgress:[n.userInfo[@"done"] integerValue] total:t]; }
 - (void)dlDone:(NSNotification *)n { [self showDownloadMessage:LF(@"✓  %ld tracks saved offline",(long)[n.userInfo[@"ok"] integerValue])]; }
 - (void)dlFull:(NSNotification *)n { [self showDownloadMessage:L(@"Storage full, download stopped")]; }
@@ -513,6 +615,10 @@ static NSArray* shuffledFrom(NSArray*list,NSInteger idx){
 }
 
 - (void)playTrackId:(NSString *)trackId title:(NSString *)title artist:(NSString *)artist cover:(NSString *)cover {
+    _needsResume=NO;   // neue Wiedergabe: "Play" soll danach diesen Titel fortsetzen, nicht den gespeicherten der letzten Sitzung
+    // Länge aus der Liste (ms), damit beim Spielen während des Downloads gleich die Restzeit stimmt; sonst aus den Metadaten unten
+    double dur=0; for(NSDictionary*q in [(_userQueue?:@[]) arrayByAddingObjectsFromArray:_queue?:@[]]) if([q[@"id"] isEqual:trackId] && [q[@"dur"] doubleValue]>0){ dur=[q[@"dur"] doubleValue]/1000.0; break; }
+    [MMAudio setExpectedDuration:dur];
     // offline: Songs, die nicht gespeichert sind, überspringen statt hängen zu bleiben (höchstens einmal die ganze Liste durch)
     static NSInteger skips=0;
     if(![MMSpotify networkReachable] && ![MMSpotify playableOffline:trackId]){
@@ -531,8 +637,9 @@ static NSArray* shuffledFrom(NSArray*list,NSInteger idx){
             // Cover aus der Liste behalten: Spotify liefert hier oft eine andere Adresse fürs gleiche Bild -> sonst Flackern + doppeltes Laden
             _curTitle=info[@"title"]?:title; _curArtist=info[@"artist"]?:artist; _curCover=cover.length?cover:(info[@"cover"]?:cover);
             _curAlbumId=info[@"albumId"]; _curAlbum=info[@"album"]; _curArtistId=info[@"artistId"];
+            if([info[@"durMs"] doubleValue]>0) [MMAudio setExpectedDuration:[info[@"durMs"] doubleValue]/1000.0];   // Länge, solange der Titel noch lädt
             // Verlauf auf dem iPhone (Spotify erfährt von dieser Wiedergabe nichts) -> Startseite zeigt sie sofort
-            [MMHistory recordTrack:@{@"id":trackId,@"title":_curTitle?:@"",@"artist":_curArtist?:@"",@"cover":_curCover?:@"",@"albumId":_curAlbumId?:@"",@"album":_curAlbum?:@""}];
+            [MMHistory recordTrack:@{@"id":trackId,@"title":_curTitle?:@"",@"artist":_curArtist?:@"",@"cover":_curCover?:@"",@"albumId":_curAlbumId?:@"",@"album":_curAlbum?:@"",@"artistId":_curArtistId?:@""}];
             if(_context && !_fromUser) [MMHistory recordContext:_context];
             _npTitle.text=_curTitle; _npArtist.text=_curArtist;
             [self loadNpCover:_curCover];
@@ -541,10 +648,11 @@ static NSArray* shuffledFrom(NSArray*list,NSInteger idx){
         }
     }];
     // echten Ton starten -> Spinner während des Ladens
-    _npPlay.hidden=YES; [_npSpinner startAnimating];
+    _npPlay.hidden=YES; [_npSpinner startAnimating]; _loading=YES; [self showLoadProgress:0]; [self padBarRefresh];
     _playStartTS=0;
-    [MMSpotify playTrack:trackId completion:^(BOOL ok,NSString*e){
-        [_npSpinner stopAnimating]; _npPlay.hidden=NO;
+    [MMSpotify playTrack:trackId stream:(_pendingSeek<=0) completion:^(BOOL ok,NSString*e){   // Fortsetzen an gespeicherter Stelle: erst ganz laden (Spulen braucht die Datei)
+
+        [_npSpinner stopAnimating]; _npPlay.hidden=NO; _loading=NO; if(![MMAudio isBuffering]) [self showLoadProgress:-1];   // spielt schon, lädt noch: grün bleibt
         if(!ok) [self showPlayError:e?:@""];
         if(ok){ _playStartTS=[NSDate timeIntervalSinceReferenceDate]; if(_pendingSeek>0){ [MMAudio seekTo:_pendingSeek]; _pendingSeek=0; } [self prefetchNext]; [self saveState]; }
         [self drawNpPlay]; [self updateNowPlaying];
@@ -590,6 +698,7 @@ static NSArray* shuffledFrom(NSArray*list,NSInteger idx){
     }
     UIImage*img=UIGraphicsGetImageFromCurrentImageContext(); UIGraphicsEndImageContext();
     [_npPlay setImage:img forState:UIControlStateNormal];
+    [self padBarRefresh];
 }
 - (void)npTogglePlay {
     if([MMAudio isPlaying]){ [MMAudio setPaused:YES]; [self drawNpPlay]; [self updateNowPlaying]; return; }
@@ -600,7 +709,7 @@ static NSArray* shuffledFrom(NSArray*list,NSInteger idx){
     [[[UIAlertView alloc] initWithTitle:L(@"Can't reach Spotify") message:L(@"This network seems to block Spotify's ports (4070, 443 and 80), so songs can't load. Library and search still work. Try another Wi-Fi or mobile data.") delegate:nil cancelButtonTitle:L(@"OK") otherButtonTitles:nil] show];
 }
 - (void)keysRefused {
-    [[[UIAlertView alloc] initWithTitle:L(@"Spotify won't play songs for this account") message:L(@"Spotify refuses the song keys for your account, so songs can't play or download. Library and search still work. This mostly happens with newly created Premium or trial accounts. An older Premium account works. If your account is older, try again later.") delegate:nil cancelButtonTitle:L(@"OK") otherButtonTitles:nil] show];
+    [[[UIAlertView alloc] initWithTitle:L(@"Your Spotify account is too new") message:L(@"Spotify doesn't give song keys to new accounts in older apps like Spotify6, so songs can't play or download. Library and search still work.\n\nSpotify blocks this on their side, so Spotify6 can't fix it. To play music, log in with an older Premium account (Settings, Log out). If your account isn't new, try again later.") delegate:nil cancelButtonTitle:L(@"OK") otherButtonTitles:nil] show];
 }
 - (void)notPremium {
     [[[UIAlertView alloc] initWithTitle:L(@"Spotify Premium needed") message:LF(@"Your Spotify account is \"%@\", not Premium. Spotify only lets Premium accounts play songs in other apps like Spotify6.",[MMSpotify productType]?:@"?") delegate:nil cancelButtonTitle:L(@"OK") otherButtonTitles:nil] show];
@@ -632,7 +741,10 @@ static NSArray* shuffledFrom(NSArray*list,NSInteger idx){
     [MMAudio setPaused:NO]; [self drawNpPlay]; [self updateNowPlaying];
 }
 + (BOOL)coverFlowOnRotate { id v=[[NSUserDefaults standardUserDefaults] objectForKey:@"coverFlowOnRotate"]; return v?[v boolValue]:YES; }
-+ (void)setCoverFlowOnRotate:(BOOL)on { [[NSUserDefaults standardUserDefaults] setBool:on forKey:@"coverFlowOnRotate"]; [[NSUserDefaults standardUserDefaults] synchronize]; }
++ (void)setCoverFlowOnRotate:(BOOL)on {   // iPhone: Cover Flow beim Querdrehen; iPad: Eintrag in der Seitenleiste
+    [[NSUserDefaults standardUserDefaults] setBool:on forKey:@"coverFlowOnRotate"]; [[NSUserDefaults standardUserDefaults] synchronize];
+    if(gRoot) [gRoot->_sidebar setShowsCoverFlow:on];
+}
 // Statusleiste (Netz, Uhrzeit, Akku) immer, außer im Cover Flow (Vollbild quer).
 - (void)updateStatusBar {
     BOOL full=(_cflow!=nil);
@@ -640,6 +752,7 @@ static NSArray* shuffledFrom(NSArray*list,NSInteger idx){
 }
 // ---- Cover Flow: die App selbst bleibt hochkant, die Ansicht wird um 90° gedreht eingeblendet ----
 - (void)orientationChanged {
+    if(MMIsPad()) return;   // iPad: Drehen dreht nur das Layout; Cover Flow gibt es über die Seitenleiste
     UIDeviceOrientation o=[UIDevice currentDevice].orientation;
     if(UIDeviceOrientationIsLandscape(o)){
         if(self.presentedViewController) return;
@@ -654,6 +767,7 @@ static NSArray* shuffledFrom(NSArray*list,NSInteger idx){
 }
 - (void)openCoverFlow:(UIDeviceOrientation)o {
     CGSize sz=CGSizeMake(self.view.bounds.size.height,self.view.bounds.size.width);
+    if(MMIsPad()){ CGSize b=self.view.bounds.size; sz=CGSizeMake(MAX(b.width,b.height),MIN(b.width,b.height)); }   // immer quer, auch wenn das iPad hochkant ist
     _cflow=[[MMCoverFlowView alloc] initWithLandscapeSize:sz];
     __weak MMRootController*ws=self; _cflow.onClose=^{ [ws closeCoverFlow]; };
     _cflow.center=CGPointMake(self.view.bounds.size.width/2,self.view.bounds.size.height/2);
@@ -661,7 +775,15 @@ static NSArray* shuffledFrom(NSArray*list,NSInteger idx){
     _cflow.alpha=0; [self.view addSubview:_cflow]; _dlBar.hidden=YES; [self updateStatusBar];
     [UIView animateWithDuration:0.3 animations:^{ _cflow.alpha=1; }];
 }
+// iPad: quer ohne Drehung über alles, hochkant um 90° gedreht wie am iPhone (nach jedem Drehen aus layoutPad)
+- (void)placePadCoverFlow {
+    if(!_cflow) return;
+    CGSize b=self.view.bounds.size; _cflow.center=CGPointMake(b.width/2,b.height/2);
+    _cflow.transform=(b.width>b.height)?CGAffineTransformIdentity:CGAffineTransformMakeRotation(M_PI_2);
+    [self.view bringSubviewToFront:_cflow];
+}
 - (void)rotateCoverFlow:(UIDeviceOrientation)o animated:(BOOL)a {
+    if(MMIsPad()){ [self placePadCoverFlow]; return; }
     CGFloat ang=(o==UIDeviceOrientationLandscapeRight)?-M_PI_2:M_PI_2;   // Home-Taste rechts = LandscapeLeft
     [UIView animateWithDuration:a?0.3:0 animations:^{ _cflow.transform=CGAffineTransformMakeRotation(ang); }];
 }
@@ -671,6 +793,7 @@ static NSArray* shuffledFrom(NSArray*list,NSInteger idx){
 }
 
 - (void)openQueue {
+    if(MMIsPad() && !self.presentedViewController && UIInterfaceOrientationIsLandscape(self.interfaceOrientation)){ [self toggleQueueDock]; return; }
     if(self.presentedViewController) return;
     [self presentViewController:[[MMQueueController alloc] init] animated:YES completion:nil];
 }

@@ -1,5 +1,6 @@
 #import "MMBrowseController.h"
 #import "SpotTheme.h"
+#import "MMLayout.h"
 #import "MMRootController.h"
 #import "MMTrackListController.h"
 #import "MeshL10n.h"
@@ -14,15 +15,15 @@
 }
 
 - (void)loadView {
-    self.view=[[UIView alloc] initWithFrame:[UIScreen mainScreen].bounds];
+    self.view=[[UIView alloc] initWithFrame:MMPageFrame(NO)];
     self.view.backgroundColor=[SpotTheme bg];
     _W=self.view.bounds.size.width;
 
     UILabel*t=[[UILabel alloc] initWithFrame:CGRectMake(16,10,_W-32,30)];
-    t.text=L(@"Browse all"); t.font=[UIFont boldSystemFontOfSize:22]; t.textColor=[SpotTheme ink]; [self.view addSubview:t];
+    t.autoresizingMask=UIViewAutoresizingFlexibleWidth; t.text=L(@"Browse all"); t.font=[UIFont boldSystemFontOfSize:22]; t.textColor=[SpotTheme ink]; [self.view addSubview:t];
 
     _sc=[[UIScrollView alloc] initWithFrame:CGRectMake(0,46,_W,self.view.bounds.size.height-46)];
-    _sc.contentInset=UIEdgeInsetsMake(8,0,84,0); _sc.alwaysBounceVertical=YES;   // Platz für Now-Playing + Download-Leiste
+    _sc.contentInset=UIEdgeInsetsMake(8,0,MMPageBottomInset(84),0); _sc.alwaysBounceVertical=YES;   // Platz für Now-Playing + Download-Leiste
     _sc.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight; [self.view addSubview:_sc];
 
     // name / RGB-Farbe / Such-Query (q bereits URL-kodiert: %22 = ")
@@ -48,20 +49,23 @@
 }
 
 - (void)buildGrid {
-    CGFloat gap=12, tileW=(_W-16*2-gap)/2, tileH=68;
+    for(UIView*v in [_sc.subviews copy]) if(v.tag>=1000) [v removeFromSuperview];   // Neuaufbau nach dem Drehen: alte Kacheln weg
+    NSInteger cols=MMGridColumns(_W);   // iPhone 2, iPad 3-4
+    CGFloat gap=12, tileW=(_W-16*2-gap*(cols-1))/cols, tileH=68;
     for(int i=0;i<(int)_cats.count;i++){
         NSDictionary*cat=_cats[i]; NSArray*c=cat[@"c"];
-        CGFloat col=i%2, rowY=(i/2)*(tileH+gap);
+        CGFloat col=i%cols, rowY=(i/cols)*(tileH+gap);
         UIView*tile=[[UIView alloc] initWithFrame:CGRectMake(16+col*(tileW+gap),rowY,tileW,tileH)];
         tile.backgroundColor=[UIColor colorWithRed:[c[0] floatValue] green:[c[1] floatValue] blue:[c[2] floatValue] alpha:1];
-        tile.layer.cornerRadius=6; tile.clipsToBounds=YES;
+        tile.layer.cornerRadius=6; tile.clipsToBounds=YES; tile.tag=1000+i;
         UILabel*nm=[[UILabel alloc] initWithFrame:CGRectMake(12,8,tileW-24,tileH-16)];
         nm.text=cat[@"name"]; nm.numberOfLines=2; nm.font=[UIFont boldSystemFontOfSize:16]; nm.textColor=[UIColor whiteColor]; [tile addSubview:nm];
         UIButton*tap=[UIButton buttonWithType:UIButtonTypeCustom]; tap.frame=tile.bounds; tap.tag=i; [tap addTarget:self action:@selector(open:) forControlEvents:UIControlEventTouchUpInside]; [tile addSubview:tap];
         [_sc addSubview:tile];
     }
-    int rows=((int)_cats.count+1)/2; _sc.contentSize=CGSizeMake(_W,rows*(tileH+gap)+10);
+    int rows=((int)_cats.count+(int)cols-1)/(int)cols; _sc.contentSize=CGSizeMake(_W,rows*(tileH+gap)+10);
 }
+- (void)relayoutForSize:(CGSize)size { _W=size.width; [self buildGrid]; }   // iPad gedreht
 
 - (void)open:(UIButton *)b {
     if(b.tag>=(int)_cats.count) return;

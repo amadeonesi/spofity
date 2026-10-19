@@ -1,5 +1,6 @@
 #import "MMSearchController.h"
 #import "SpotTheme.h"
+#import "MMLayout.h"
 #import "MMSpotify.h"
 #import "MMRootController.h"
 #import "MMKeySetupController.h"
@@ -25,7 +26,7 @@
 }
 
 - (void)loadView {
-    self.view=[[UIView alloc] initWithFrame:[UIScreen mainScreen].bounds];
+    self.view=[[UIView alloc] initWithFrame:MMPageFrame(NO)];
     self.view.backgroundColor=[SpotTheme bg];
     CGFloat W=self.view.bounds.size.width, H=self.view.bounds.size.height;
 
@@ -37,11 +38,11 @@
     _field=[[UITextField alloc] initWithFrame:CGRectMake(12,0,W-32-24,42)];
     _field.placeholder=L(@"Artists, songs …"); _field.font=[UIFont systemFontOfSize:15]; _field.textColor=[UIColor blackColor];
     _field.returnKeyType=UIReturnKeySearch; _field.delegate=self; _field.autocorrectionType=UITextAutocorrectionTypeNo;
-    _field.clearButtonMode=UITextFieldViewModeWhileEditing; _field.contentVerticalAlignment=UIControlContentVerticalAlignmentCenter; [box addSubview:_field];
+    _field.autoresizingMask=UIViewAutoresizingFlexibleWidth; _field.clearButtonMode=UITextFieldViewModeWhileEditing; _field.contentVerticalAlignment=UIControlContentVerticalAlignmentCenter; [box addSubview:_field];
 
     _table=[[UITableView alloc] initWithFrame:CGRectMake(0,98,W,H-98) style:UITableViewStylePlain];
     _table.backgroundColor=[SpotTheme bg]; _table.separatorStyle=UITableViewCellSeparatorStyleNone;
-    _table.dataSource=self; _table.delegate=self; _table.rowHeight=66; _table.contentInset=_table.scrollIndicatorInsets=UIEdgeInsetsMake(0,0,84,0);
+    _table.dataSource=self; _table.delegate=self; _table.rowHeight=MMTrackRowH; _table.contentInset=_table.scrollIndicatorInsets=UIEdgeInsetsMake(0,0,MMPageBottomInset(84),0);
     _table.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight; [self.view addSubview:_table];   // mit dem Inhaltsbereich (über der Tab-Leiste) mitschrumpfen   // Platz für Now-Playing + Download-Leiste
 
     _hint=[[UILabel alloc] initWithFrame:CGRectMake(20,140,W-40,40)]; _hint.text=L(@"Find millions of songs."); _hint.textColor=[SpotTheme faint]; _hint.font=[SpotTheme sub]; _hint.textAlignment=NSTextAlignmentCenter; _hint.numberOfLines=0; [self.view addSubview:_hint];
@@ -65,6 +66,7 @@
 #ifdef DEBUG
     [[NSNotificationCenter defaultCenter] addObserverForName:@"MMDebugSearch" object:nil queue:nil usingBlock:^(NSNotification*n){ _field.text=n.object; [self doSearch:n.object]; }];
 #endif
+    MMAutoMask(self.view);   // iPad: Unteransichten folgen der Breite beim Drehen
 }
 
 - (void)viewDidLoad { [super viewDidLoad]; [self refreshKeyState]; [self showRecents]; }
@@ -167,12 +169,12 @@ static NSArray* items(NSDictionary*j,NSString*k){ id v=[j[k] isKindOfClass:[NSDi
 
 - (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
     CGFloat W=tv.bounds.size.width;
-    UITableViewCell*c=[tv dequeueReusableCellWithIdentifier:@"r"];
-    if(!c){ c=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"r"];
+    UITableViewCell*c=[tv dequeueReusableCellWithIdentifier:MMCellID(@"r",tv)];
+    if(!c){ c=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:MMCellID(@"r",tv)];
         c.backgroundColor=[SpotTheme bg]; c.selectionStyle=UITableViewCellSelectionStyleNone;
-        UIImageView*cov=[[UIImageView alloc] initWithFrame:CGRectMake(16,9,48,48)]; cov.tag=1; cov.backgroundColor=[SpotTheme card]; cov.clipsToBounds=YES; cov.contentMode=UIViewContentModeScaleAspectFill; [c.contentView addSubview:cov];
-        UILabel*ti=[[UILabel alloc] initWithFrame:CGRectMake(78,14,W-78-16,20)]; ti.tag=2; ti.font=[UIFont boldSystemFontOfSize:15]; ti.textColor=[SpotTheme ink]; [c.contentView addSubview:ti];
-        UILabel*ar=[[UILabel alloc] initWithFrame:CGRectMake(78,36,W-78-16,18)]; ar.tag=3; ar.font=[SpotTheme sub]; ar.textColor=[SpotTheme muted]; [c.contentView addSubview:ar]; }
+        UIImageView*cov=[[UIImageView alloc] initWithFrame:CGRectMake(16,6,44,44)]; cov.tag=1; cov.backgroundColor=[SpotTheme card]; cov.clipsToBounds=YES; cov.contentMode=UIViewContentModeScaleAspectFill; [c.contentView addSubview:cov];
+        UILabel*ti=[[UILabel alloc] initWithFrame:CGRectMake(70,9,W-70-16,20)]; ti.tag=2; ti.font=[UIFont boldSystemFontOfSize:15]; ti.textColor=[SpotTheme ink]; [c.contentView addSubview:ti];
+        UILabel*ar=[[UILabel alloc] initWithFrame:CGRectMake(70,29,W-70-16,18)]; ar.tag=3; ar.font=[SpotTheme sub]; ar.textColor=[SpotTheme muted]; [c.contentView addSubview:ar]; }
     NSString*k=_secs[ip.section]; NSDictionary*r=[self rowsOf:ip.section][ip.row];
     UIImageView*cov=(UIImageView*)[c.contentView viewWithTag:1];
     if([k isEqualToString:@"recent"]){   // gespeicherter Eintrag: Art aus "kind", Untertitel wie in den Treffern
@@ -202,6 +204,7 @@ static NSArray* items(NSDictionary*j,NSString*k){ id v=[j[k] isKindOfClass:[NSDi
     if([kind isEqual:@"album"]){ [[MMRootController shared] pushContent:[[MMTrackListController alloc] initWithTitle:e[@"name"] path:[@"albums/" stringByAppendingString:e[@"id"]]]]; return; }
     if([k isEqualToString:@"recent"]) [[MMRootController shared] playList:@[[MMSearchController trackOf:e]] index:0];
     else [[MMRootController shared] playList:_results index:ip.row];   // alle gefundenen Titel = Queue
-    [[MMRootController shared] openPlayer];
+    if(!MMIsPad()) [[MMRootController shared] openPlayer];   // iPad: nur abspielen, die Leiste unten zeigt den Titel
 }
+- (void)relayoutForSize:(CGSize)size { [_table reloadData]; }   // iPad gedreht: Zellen in neuer Breite
 @end

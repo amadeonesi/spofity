@@ -1,5 +1,5 @@
 #!/bin/sh
-# Builds mbedTLS for the app (armv7, iOS 6.0) from the verified release tarball into out/ios.
+# Builds mbedTLS for the app (armv7, iOS 5.0 so one build runs on iOS 5 and 6) from the verified release tarball into out/ios.
 # Same scripts and configuration as IG6.
 set -eu
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -25,5 +25,5 @@ build() { # $1 variant, $2 clang target, $3 sysroot
   cp "$HERE/mbedtls_ios6_config.h" "$HERE/mbedtls_ios6_predef.h" "$OUT/include/"
 }
 
-build ios armv7-apple-ios6.0 "$SDK_IOS"
+build ios armv7-apple-ios5.0 "$SDK_IOS"
 echo "built $HERE/out/ios"

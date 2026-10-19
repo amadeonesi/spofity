@@ -195,5 +195,13 @@
 "(no log lines yet: play a song, then open this page again)" = "(no log lines yet: play a song, then open this page again)";
 "Run connection test" = "Run connection test";
 "running … (up to about a minute)" = "running … (up to about a minute)";
-"Spotify won't play songs for this account" = "Spotify won't play songs for this account";
-"Spotify refuses the song keys for your account, so songs can't play or download. Library and search still work. This mostly happens with newly created Premium or trial accounts. An older Premium account works. If your account is older, try again later." = "Spotify refuses the song keys for your account, so songs can't play or download. Library and search still work. This mostly happens with newly created Premium or trial accounts. An older Premium account works. If your account is older, try again later.";
+"Your Spotify account is too new" = "Your Spotify account is too new";
+"Spotify doesn't give song keys to new accounts in older apps like Spotify6, so songs can't play or download. Library and search still work.\n\nSpotify blocks this on their side, so Spotify6 can't fix it. To play music, log in with an older Premium account (Settings, Log out). If your account isn't new, try again later." = "Spotify doesn't give song keys to new accounts in older apps like Spotify6, so songs can't play or download. Library and search still work.\n\nSpotify blocks this on their side, so Spotify6 can't fix it. To play music, log in with an older Premium account (Settings, Log out). If your account isn't new, try again later.";
+
+/* iPad-Seitenleiste */
+"Recent Playlists" = "Recent Playlists";
+"Recent playlists" = "Recent playlists";
+"Recent artists" = "Recent artists";
+"Recent albums" = "Recent albums";
+"Cover Flow" = "Cover Flow";
+"Cover Flow in sidebar" = "Cover Flow in sidebar";

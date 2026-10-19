@@ -1,8 +1,8 @@
 Package: io.github.ikiwy.spotify6widget
 Name: Spotify6 Widget
-Version: 1.1
+Version: 1.2
 Architecture: iphoneos-arm
-Description: Now playing widget for Spotify6 in Notification Center (iOS 6)
+Description: Now playing widget for Spotify6 in Notification Center (iOS 5 and 6; not on iPads with iOS 5)
 Maintainer: kiwy
 Author: kiwy
 Section: Widgets

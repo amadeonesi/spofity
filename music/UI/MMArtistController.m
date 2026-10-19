@@ -1,5 +1,6 @@
 #import "MMArtistController.h"
 #import "SpotTheme.h"
+#import "MMLayout.h"
 #import "MMSpotify.h"
 #import "MMRootController.h"
 #import "MMTrackListController.h"
@@ -14,7 +15,7 @@
     NSString *_artistId, *_name, *_portraitURL;
     UILabel *_nav, *_hint, *_bigName;
     UIImageView *_portrait;
-    UITableView *_table;
+    UITableView *_table, *_table2;   // iPad: _table links "Beliebt", _table2 rechts Alben / Singles & EPs
     UIActivityIndicatorView *_spin;
     NSArray *_tracks;              // @[ {id,title,artist,cover} ] - Abspiel-Queue
     NSArray *_sections;            // @[ @{title, kind:@"tracks"|@"albums", rows} ]
@@ -26,7 +27,7 @@
 }
 
 - (void)loadView {
-    self.view=[[UIView alloc] initWithFrame:[UIScreen mainScreen].applicationFrame];
+    self.view=[[UIView alloc] initWithFrame:MMPageFrame(YES)];
     self.view.backgroundColor=[SpotTheme bg];
     CGFloat W=self.view.bounds.size.width, H=self.view.bounds.size.height;
 
@@ -39,7 +40,7 @@
 
     _table=[[UITableView alloc] initWithFrame:CGRectMake(0,46,W,H-46) style:UITableViewStylePlain];
     _table.backgroundColor=[SpotTheme bg]; _table.separatorStyle=UITableViewCellSeparatorStyleNone;
-    _table.dataSource=self; _table.delegate=self; _table.rowHeight=66; _table.contentInset=UIEdgeInsetsMake(0,0,90,0);
+    _table.dataSource=self; _table.delegate=self; _table.rowHeight=MMTrackRowH; _table.contentInset=UIEdgeInsetsMake(0,0,MMPageBottomInset(90),0);
     _table.autoresizingMask=UIViewAutoresizingFlexibleHeight|UIViewAutoresizingFlexibleWidth; [self.view addSubview:_table];
 
     // Kopf: rundes Bild + großer Name
@@ -48,16 +49,28 @@
     _portrait.layer.cornerRadius=56; _portrait.clipsToBounds=YES; _portrait.contentMode=UIViewContentModeScaleAspectFill; [head addSubview:_portrait];
     _bigName=[[UILabel alloc] initWithFrame:CGRectMake(16,128,W-32,32)]; _bigName.text=_name?:@""; _bigName.font=[UIFont boldSystemFontOfSize:24];
     _bigName.textColor=[SpotTheme ink]; _bigName.textAlignment=NSTextAlignmentCenter; _bigName.adjustsFontSizeToFitWidth=YES; [head addSubview:_bigName];
-    _table.tableHeaderView=head;
+    MMAutoMask(head);   // iPad: Bild und Name bleiben beim Drehen mittig
+    if(MMIsPad()){
+        // iPad: Kopf fest oben, darunter zwei Spalten, die jede für sich scrollen (wie Spotify 2012 auf dem iPad)
+        head.frame=CGRectMake(0,46,W,172); head.autoresizingMask=UIViewAutoresizingFlexibleWidth; [self.view addSubview:head];
+        CGFloat ty=46+172, lw=floor(W/2);
+        _table.frame=CGRectMake(0,ty,lw,H-ty); _table.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleRightMargin|UIViewAutoresizingFlexibleHeight;
+        _table2=[[UITableView alloc] initWithFrame:CGRectMake(lw,ty,W-lw,H-ty) style:UITableViewStylePlain];
+        _table2.backgroundColor=[SpotTheme bg]; _table2.separatorStyle=UITableViewCellSeparatorStyleNone; _table2.dataSource=self; _table2.delegate=self;
+        _table2.rowHeight=MMTrackRowH; _table2.contentInset=_table.contentInset;
+        _table2.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleLeftMargin|UIViewAutoresizingFlexibleHeight; [self.view addSubview:_table2];
+    } else _table.tableHeaderView=head;
     __weak MMArtistController*ws=self;   // lange drücken auf einen beliebten Titel -> Titel-Menü
     [MMSongMenu attachToTable:_table swipeToQueue:YES trackAt:^NSDictionary*(NSIndexPath*ip){ MMArtistController*s=ws; if(!s||ip.section>=(NSInteger)s->_sections.count) return nil;
-        NSDictionary*sec=s->_sections[ip.section]; return [sec[@"kind"] isEqualToString:@"tracks"]?sec[@"rows"][ip.row]:nil; }];
+        NSArray*ss=[s secs:s->_table]; if(ip.section>=(NSInteger)ss.count) return nil;
+        NSDictionary*sec=ss[ip.section]; return [sec[@"kind"] isEqualToString:@"tracks"]?sec[@"rows"][ip.row]:nil; }];
 
     _hint=[[UILabel alloc] initWithFrame:CGRectMake(20,240,W-40,40)]; _hint.textColor=[SpotTheme faint]; _hint.font=[SpotTheme sub]; _hint.textAlignment=NSTextAlignmentCenter; _hint.numberOfLines=2; _hint.hidden=YES; [self.view addSubview:_hint];
     _spin=[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleWhite];
     _spin.center=CGPointMake(W/2,250); _spin.hidesWhenStopped=YES; [_spin startAnimating]; [self.view addSubview:_spin];
 
     [self load];
+    MMAutoMask(self.view);   // iPad: Unteransichten folgen der Breite beim Drehen
 }
 
 - (void)load {
@@ -90,27 +103,34 @@ static NSString* yearOf(NSDictionary*a){ id y=a[@"release_date"]; return [y isKi
     }
     _sections=secs;
     _hint.hidden=(secs.count>0); if(!secs.count) _hint.text=L(@"Empty.");
-    [_table reloadData];
+    [_table reloadData]; [_table2 reloadData];
 }
 
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return _sections.count; }
-- (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)s { return [_sections[s][@"rows"] count]; }
+// Abschnitte einer Tabelle: iPhone alle; iPad links nur "Beliebt" (Titel), rechts Alben und Singles
+- (NSArray *)secs:(UITableView *)tv {
+    if(!_table2) return _sections?:@[];
+    BOOL left=(tv==_table); NSMutableArray*o=[NSMutableArray array];
+    for(NSDictionary*sec in _sections) if([sec[@"kind"] isEqualToString:@"tracks"]==left) [o addObject:sec];
+    return o;
+}
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return [self secs:tv].count; }
+- (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)s { return [[self secs:tv][s][@"rows"] count]; }
 - (CGFloat)tableView:(UITableView *)tv heightForHeaderInSection:(NSInteger)s { return 40; }
 - (UIView *)tableView:(UITableView *)tv viewForHeaderInSection:(NSInteger)s {
     UIView*v=[[UIView alloc] initWithFrame:CGRectMake(0,0,tv.bounds.size.width,40)]; v.backgroundColor=[SpotTheme bg];
-    UILabel*l=[[UILabel alloc] initWithFrame:CGRectMake(16,8,tv.bounds.size.width-32,28)]; l.text=_sections[s][@"title"];
+    UILabel*l=[[UILabel alloc] initWithFrame:CGRectMake(16,8,tv.bounds.size.width-32,28)]; l.text=[self secs:tv][s][@"title"];
     l.font=[UIFont boldSystemFontOfSize:18]; l.textColor=[SpotTheme ink]; l.backgroundColor=[UIColor clearColor]; [v addSubview:l];
     return v;
 }
 - (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
     CGFloat W=tv.bounds.size.width;
-    UITableViewCell*c=[tv dequeueReusableCellWithIdentifier:@"r"];
-    if(!c){ c=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"r"];
+    UITableViewCell*c=[tv dequeueReusableCellWithIdentifier:MMCellID(@"r",tv)];
+    if(!c){ c=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:MMCellID(@"r",tv)];
         c.backgroundColor=[SpotTheme bg]; c.selectionStyle=UITableViewCellSelectionStyleNone;
-        UIImageView*cov=[[UIImageView alloc] initWithFrame:CGRectMake(16,9,48,48)]; cov.tag=1; cov.backgroundColor=[SpotTheme card]; cov.layer.cornerRadius=4; cov.clipsToBounds=YES; cov.contentMode=UIViewContentModeScaleAspectFill; [c.contentView addSubview:cov];
-        UILabel*ti=[[UILabel alloc] initWithFrame:CGRectMake(78,14,W-78-16,20)]; ti.tag=2; ti.font=[UIFont boldSystemFontOfSize:15]; ti.textColor=[SpotTheme ink]; [c.contentView addSubview:ti];
-        UILabel*sb=[[UILabel alloc] initWithFrame:CGRectMake(78,36,W-78-16,18)]; sb.tag=3; sb.font=[SpotTheme sub]; sb.textColor=[SpotTheme muted]; [c.contentView addSubview:sb]; }
-    NSDictionary*sec=_sections[ip.section], *r=sec[@"rows"][ip.row];
+        UIImageView*cov=[[UIImageView alloc] initWithFrame:CGRectMake(16,6,44,44)]; cov.tag=1; cov.backgroundColor=[SpotTheme card]; cov.layer.cornerRadius=4; cov.clipsToBounds=YES; cov.contentMode=UIViewContentModeScaleAspectFill; [c.contentView addSubview:cov];
+        UILabel*ti=[[UILabel alloc] initWithFrame:CGRectMake(70,9,W-70-16,20)]; ti.tag=2; ti.font=[UIFont boldSystemFontOfSize:15]; ti.textColor=[SpotTheme ink]; [c.contentView addSubview:ti];
+        UILabel*sb=[[UILabel alloc] initWithFrame:CGRectMake(70,29,W-70-16,18)]; sb.tag=3; sb.font=[SpotTheme sub]; sb.textColor=[SpotTheme muted]; [c.contentView addSubview:sb]; }
+    NSDictionary*sec=[self secs:tv][ip.section], *r=sec[@"rows"][ip.row];
     UIImageView*cov=(UIImageView*)[c.contentView viewWithTag:1]; cov.image=nil;
     if([sec[@"kind"] isEqualToString:@"tracks"]){
         ((UILabel*)[c.contentView viewWithTag:2]).text=r[@"title"];
@@ -124,10 +144,10 @@ static NSString* yearOf(NSDictionary*a){ id y=a[@"release_date"]; return [y isKi
     return c;
 }
 - (void)tableView:(UITableView *)tv didSelectRowAtIndexPath:(NSIndexPath *)ip {
-    NSDictionary*sec=_sections[ip.section];
+    NSDictionary*sec=[self secs:tv][ip.section];
     if([sec[@"kind"] isEqualToString:@"tracks"]){
         [[MMRootController shared] playList:_tracks index:ip.row context:@{@"type":@"artist",@"id":_artistId,@"name":_name?:@"",@"images":_portraitURL?@[@{@"url":_portraitURL}]:@[]}];
-        [[MMRootController shared] openPlayer];
+        if(!MMIsPad()) [[MMRootController shared] openPlayer];   // iPad: nur abspielen, die Leiste unten zeigt den Titel
         return;
     }
     NSDictionary*a=sec[@"rows"][ip.row]; if(![a[@"id"] isKindOfClass:[NSString class]]) return;
@@ -135,4 +155,5 @@ static NSString* yearOf(NSDictionary*a){ id y=a[@"release_date"]; return [y isKi
     [[MMRootController shared] pushContent:tl];
 }
 - (void)close { [[MMRootController shared] popContent]; }
+- (void)relayoutForSize:(CGSize)size { [_table reloadData]; [_table2 reloadData]; }   // iPad gedreht: Zellen in neuer Breite
 @end

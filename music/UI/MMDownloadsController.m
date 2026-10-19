@@ -1,5 +1,6 @@
 #import "MMDownloadsController.h"
 #import "SpotTheme.h"
+#import "MMLayout.h"
 #import "MMSpotify.h"
 #import "MMRootController.h"
 #import "MMTrackListController.h"
@@ -21,7 +22,7 @@
 }
 
 - (void)loadView {
-    self.view=[[UIView alloc] initWithFrame:[UIScreen mainScreen].applicationFrame];
+    self.view=[[UIView alloc] initWithFrame:MMPageFrame(YES)];
     self.view.backgroundColor=[SpotTheme bg];
     CGFloat W=self.view.bounds.size.width, H=self.view.bounds.size.height;
     UIButton*back=[UIButton buttonWithType:UIButtonTypeCustom]; back.frame=CGRectMake(8,8,80,34);
@@ -32,7 +33,7 @@
 
     _table=[[UITableView alloc] initWithFrame:CGRectMake(0,46,W,H-46) style:UITableViewStylePlain];
     _table.backgroundColor=[SpotTheme bg]; _table.separatorColor=[SpotTheme line]; _table.rowHeight=60;
-    _table.dataSource=self; _table.delegate=self; _table.contentInset=_table.scrollIndicatorInsets=UIEdgeInsetsMake(0,0,90,0);
+    _table.dataSource=self; _table.delegate=self; _table.contentInset=_table.scrollIndicatorInsets=UIEdgeInsetsMake(0,0,MMPageBottomInset(90),0);
     _table.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight; [self.view addSubview:_table];
 
     _hint=[[UILabel alloc] initWithFrame:CGRectMake(20,140,W-40,40)]; _hint.text=L(@"No downloaded songs yet."); _hint.textColor=[SpotTheme faint];
@@ -43,6 +44,7 @@
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(reload) name:n object:nil];
     [self reload];
     [self loadKnownInfo];
+    MMAutoMask(self.view);   // iPad: Unteransichten folgen der Breite beim Drehen
 }
 - (void)dealloc { [[NSNotificationCenter defaultCenter] removeObserver:self]; }
 - (void)close { [[MMRootController shared] popContent]; }
@@ -115,8 +117,8 @@ static NSString* fmtEta(double s){
         p.progressTintColor=[SpotTheme green]; p.trackTintColor=[SpotTheme card]; p.progress=t?(float)d/t:0; [c.contentView addSubview:p];
         return c;
     }
-    UITableViewCell*c=[tv dequeueReusableCellWithIdentifier:@"s"];
-    if(!c){ c=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"s"]; c.backgroundColor=[SpotTheme bg]; c.selectionStyle=UITableViewCellSelectionStyleNone;
+    UITableViewCell*c=[tv dequeueReusableCellWithIdentifier:MMCellID(@"s",tv)];
+    if(!c){ c=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:MMCellID(@"s",tv)]; c.backgroundColor=[SpotTheme bg]; c.selectionStyle=UITableViewCellSelectionStyleNone;
         UIImageView*cov=[[UIImageView alloc] initWithFrame:CGRectMake(16,8,44,44)]; cov.tag=1; cov.backgroundColor=[SpotTheme card]; cov.contentMode=UIViewContentModeScaleAspectFill; cov.clipsToBounds=YES; [c.contentView addSubview:cov];
         UILabel*ti=[[UILabel alloc] initWithFrame:CGRectMake(72,11,W-72-70,20)]; ti.tag=2; ti.font=[UIFont boldSystemFontOfSize:15]; ti.textColor=[SpotTheme ink]; ti.backgroundColor=[UIColor clearColor]; [c.contentView addSubview:ti];
         UILabel*ar=[[UILabel alloc] initWithFrame:CGRectMake(72,31,W-72-70,18)]; ar.tag=3; ar.font=[SpotTheme sub]; ar.textColor=[SpotTheme muted]; ar.backgroundColor=[UIColor clearColor]; [c.contentView addSubview:ar];
@@ -148,4 +150,5 @@ static NSString* fmtEta(double s){
     _hint.hidden=(_done.count || [self queue].count);
     dispatch_async(dispatch_get_main_queue(), ^{ [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(reload) name:@"MMDownloadsChanged" object:nil]; });
 }
+- (void)relayoutForSize:(CGSize)size { [_table reloadData]; }   // iPad gedreht: Zellen in neuer Breite
 @end

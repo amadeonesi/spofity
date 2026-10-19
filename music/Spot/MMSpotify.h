@@ -8,6 +8,7 @@ NSString *MMDataDir(void);              // <Container>/Library/Riff (wird angele
 NSString *MMPath(NSString *relative);   // <Container>/Library/Riff/<relative>
 void MMLog(NSString *fmt, ...) NS_FORMAT_FUNCTION(1,2);   // ins App-Log (Library/Riff/.spotify-log)
 
+#define MMTrackLoadProgress @"MMTrackLoadProgress"   // Notification beim Laden eines angetippten Titels: {id, frac 0..1}
 @interface MMSpotify : NSObject
 // Login mit OAuth-Access-Token. done: ok, canonical_username, fehlertext.
 + (void)loginWithToken:(NSString *)token completion:(void(^)(BOOL ok, NSString *username, NSString *error))done;
@@ -25,6 +26,7 @@ void MMLog(NSString *fmt, ...) NS_FORMAT_FUNCTION(1,2);   // ins App-Log (Librar
 + (void)fetchTrack:(NSString *)trackId completion:(void(^)(NSDictionary *info, NSString *error))done;
 // Lädt + entschlüsselt den ganzen Track und spielt ihn ab (MMAudio).
 + (void)playTrack:(NSString *)trackId completion:(void(^)(BOOL ok, NSString *error))done;
++ (void)playTrack:(NSString *)trackId stream:(BOOL)stream completion:(void(^)(BOOL ok, NSString *error))done;   // stream=NO: erst ganz laden
 // Lädt + entschlüsselt den nächsten Track im Hintergrund in den Cache (für nahtlosen Übergang).
 + (void)prefetchTrack:(NSString *)trackId;
 // --- Offline: Playlists herunterladen ---

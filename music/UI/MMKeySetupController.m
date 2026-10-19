@@ -1,5 +1,6 @@
 #import "MMKeySetupController.h"
 #import "SpotTheme.h"
+#import "MMLayout.h"
 #import "MMSpotify.h"
 #import "MeshL10n.h"
 
@@ -53,12 +54,18 @@
     [box addSubview:f]; _y+=56; return f;
 }
 
+- (BOOL)shouldAutorotateToInterfaceOrientation:(UIInterfaceOrientation)o { return MMShouldAutorotate(o); }   // iPad: dreht mit
+- (BOOL)shouldAutorotate { return MMIsPad(); }
+MM_IOS6_BEGIN
+- (UIInterfaceOrientationMask)supportedInterfaceOrientations { return (UIInterfaceOrientationMask)MMSupportedOrientations(); }
+MM_IOS6_END
 - (void)loadView {
-    self.view=[[UIView alloc] initWithFrame:[UIScreen mainScreen].bounds];
+    self.view=[[UIView alloc] initWithFrame:MMPageFrame(NO)];
     self.view.backgroundColor=[SpotTheme bg];
-    _W=self.view.bounds.size.width; CGFloat H=self.view.bounds.size.height;
-    _scroll=[[UIScrollView alloc] initWithFrame:CGRectMake(0,0,_W,H)]; _scroll.alwaysBounceVertical=YES;
-    _scroll.autoresizingMask=UIViewAutoresizingFlexibleHeight; [self.view addSubview:_scroll];
+    _W=self.view.bounds.size.width; CGFloat H=self.view.bounds.size.height, sx=0;
+    if(MMIsPad()){ sx=floor((_W-MMPadColumnW)/2); _W=MMPadColumnW; }   // iPad: mittige Spalte, bleibt beim Drehen mittig
+    _scroll=[[UIScrollView alloc] initWithFrame:CGRectMake(sx,0,_W,H)]; _scroll.alwaysBounceVertical=YES;
+    _scroll.autoresizingMask=UIViewAutoresizingFlexibleHeight|(MMIsPad()?UIViewAutoresizingFlexibleLeftMargin|UIViewAutoresizingFlexibleRightMargin:0); [self.view addSubview:_scroll];
     // Tippen neben die Felder schließt die Tastatur
     UITapGestureRecognizer*tap=[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(hideKeyboard)]; tap.cancelsTouchesInView=NO;
     [_scroll addGestureRecognizer:tap];

@@ -1,5 +1,6 @@
 #import "MMDiagnosticsController.h"
 #import "SpotTheme.h"
+#import "MMLayout.h"
 #import "MMSpotify.h"
 #import "MMRootController.h"
 #import "MMTrackListController.h"
@@ -12,7 +13,7 @@
 }
 
 - (void)loadView {
-    self.view=[[UIView alloc] initWithFrame:[UIScreen mainScreen].applicationFrame];
+    self.view=[[UIView alloc] initWithFrame:MMPageFrame(YES)];
     self.view.backgroundColor=[SpotTheme bg];
     CGFloat W=self.view.bounds.size.width, H=self.view.bounds.size.height;
     UIButton*back=[UIButton buttonWithType:UIButtonTypeCustom]; back.frame=CGRectMake(8,8,80,34);
@@ -32,9 +33,10 @@
 
     _text=[[UITextView alloc] initWithFrame:CGRectMake(0,94,W,H-94)];
     _text.editable=NO; _text.backgroundColor=[SpotTheme bg]; _text.textColor=[SpotTheme ink];
-    _text.font=[UIFont fontWithName:@"Courier" size:10]; _text.contentInset=UIEdgeInsetsMake(0,0,90,0);
+    _text.font=[UIFont fontWithName:@"Courier" size:10]; _text.contentInset=UIEdgeInsetsMake(0,0,MMPageBottomInset(90),0);
     _text.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight; [self.view addSubview:_text];
     _text.text=[self report];
+    MMAutoMask(self.view);   // iPad: Unteransichten folgen der Breite beim Drehen
 }
 - (NSString *)report {
     NSDictionary*info=[[NSBundle mainBundle] infoDictionary];

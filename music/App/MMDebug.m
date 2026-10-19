@@ -10,6 +10,7 @@
 //   menu                     Titel-Menü (wie lange drücken) für den laufenden Titel
 //   raw <spclient-pfad>      ungefilterte JSON-Antwort -> Library/Riff/raw.json
 //   push album|artist <id> [name]   ·   tab <n>   ·   search <text>
+//   layout                   Rahmen aller Ansichten -> Library/Riff/layout.txt   ·   orient 1-4   ·   authexpired
 #ifdef DEBUG
 #import <UIKit/UIKit.h>
 #import <QuartzCore/QuartzCore.h>
@@ -99,6 +100,31 @@ static void timeCells(Class cls){
         double dt=CFAbsoluteTimeGetCurrent()-t0; gCellSum+=dt; gCellN++; if(dt>gCellMax) gCellMax=dt; return c; }));
 }
 
+// layout: Rahmen der Ansichten (Klasse, frame, tag, Drehung) zum Prüfen der iPad-/iPhone-Anordnung ohne Screenshot
+static void dumpView(UIView*v,int d,int max,NSMutableString*o){
+    [o appendFormat:@"%*s%@ %@",d*2,"",NSStringFromClass([v class]),NSStringFromCGRect(v.frame)];
+    if(v.tag) [o appendFormat:@" tag=%ld",(long)v.tag];
+    if(!CGAffineTransformIsIdentity(v.transform)) [o appendFormat:@" transform=%@ bounds=%@",NSStringFromCGAffineTransform(v.transform),NSStringFromCGRect(v.bounds)];
+    if(v.hidden) [o appendString:@" hidden"];
+    [o appendString:@"\n"];
+    if(d<max) for(UIView*c in v.subviews) dumpView(c,d+1,max,o);
+}
+static void layoutDump(void){
+    MMRootController*root=[MMRootController shared]; NSMutableString*o=[NSMutableString string];
+    UIWindow*kw=[UIApplication sharedApplication].keyWindow; UIViewController*rv=kw.rootViewController;
+    [o appendFormat:@"window %@ root=%@ orientation=%ld\n",NSStringFromCGRect(kw.bounds),NSStringFromClass([rv class]),(long)[UIApplication sharedApplication].statusBarOrientation];
+    [o appendString:@"== root view\n"]; dumpView(rv.view,0,3,o);
+    if(rv==(UIViewController*)root){
+        UIViewController*tab=[root valueForKey:@"_vcs"][[[root valueForKey:@"_sel"] integerValue]];
+        [o appendString:@"== tab page\n"]; dumpView(tab.view,0,4,o);
+        UIViewController*top=[[root valueForKey:@"_pushedStack"] lastObject];
+        if(top){ [o appendString:@"== pushed page\n"]; dumpView(top.view,0,5,o); }
+    }
+    int n=0; for(UIViewController*pv=rv.presentedViewController; pv; pv=pv.presentedViewController){
+        [o appendFormat:@"== presented %d %@\n",++n,NSStringFromClass([pv class])]; dumpView(pv.view,0,2,o); }
+    [o writeToFile:MMPath(@"layout.txt") atomically:YES encoding:NSUTF8StringEncoding error:NULL];
+}
+
 static void run(NSString*line){
     NSArray*w=[line componentsSeparatedByString:@" "]; NSString*c=w[0]; MMRootController*root=[MMRootController shared];
     NSString*rest=w.count>1?[[w subarrayWithRange:NSMakeRange(1,w.count-1)] componentsJoinedByString:@" "]:@"";
@@ -171,7 +197,7 @@ static void run(NSString*line){
         gScroll->dl=[CADisplayLink displayLinkWithTarget:gScroll selector:@selector(tick:)]; [gScroll->dl addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes]; }
     else if([c isEqualToString:@"scroll"]){   // scroll <y>: Liste im aktuellen Tab bzw. der obersten geöffneten Ansicht
         UIViewController*vc=[[root valueForKey:@"_pushedStack"] lastObject]?:[root valueForKey:@"_vcs"][[[root valueForKey:@"_sel"] integerValue]];
-        UIScrollView*sv=nil; @try{ sv=[vc valueForKey:@"_table"]; }@catch(NSException*e){ sv=[vc valueForKey:@"_sc"]; }
+        UIScrollView*sv=[vc valueForKey:class_getInstanceVariable([vc class],"_table")?@"_table":@"_sc"];   // Startseite hat keine Tabelle
         [sv setContentOffset:CGPointMake(0,[rest floatValue]) animated:NO]; }
     else if([c isEqualToString:@"fr"]){   // wer ist gerade First Responder (bekommt die Sperrbildschirm-Tasten)?
         UIWindow*kw=[UIApplication sharedApplication].keyWindow; id fr=((id(*)(id,SEL))objc_msgSend)(kw,NSSelectorFromString(@"firstResponder"));
@@ -183,7 +209,7 @@ static void run(NSString*line){
         gFake.fakeState=[w[1] isEqualToString:@"began"]?UIGestureRecognizerStateBegan:[w[1] isEqualToString:@"changed"]?UIGestureRecognizerStateChanged:UIGestureRecognizerStateEnded;
         ((void(*)(id,SEL,id))objc_msgSend)(root,NSSelectorFromString(@"npSwipe:"),gFake); }
     else if([c isEqualToString:@"seekend"]){ [MMAudio seekTo:[MMAudio duration]-2]; MMLog(@"debug: seek to %.0f of %.0f",[MMAudio currentTime],[MMAudio duration]); }   // Titelende testen
-    else if([c isEqualToString:@"audiostate"]) MMLog(@"debug: playing=%d ended=%d t=%.1f",[MMAudio isPlaying],[MMAudio hasEnded],[MMAudio currentTime]);
+    else if([c isEqualToString:@"audiostate"]) MMLog(@"debug: playing=%d ended=%d t=%.1f dur=%.1f buffering=%d",[MMAudio isPlaying],[MMAudio hasEnded],[MMAudio currentTime],[MMAudio duration],[MMAudio isBuffering]);
     else if([c isEqualToString:@"sheetpan"] && w.count>=3){   // sheetpan began|changed|ended <dy>: offenes Menü nach unten ziehen
         UIView*host=root.view; UIViewController*pv=root; while(pv.presentedViewController){ pv=pv.presentedViewController; host=pv.view; }
         UIView*ov=nil; for(UIView*v in host.subviews) if(v.tag==MMSheetTag) ov=v;
@@ -212,6 +238,10 @@ static void run(NSString*line){
             #pragma clang diagnostic pop
         } else MMLog(@"debug: %@ kann %@ nicht",t,w[2]);
     }
+    else if([c isEqualToString:@"layout"]) layoutDump();
+    else if([c isEqualToString:@"orient"]){   // orient 1-4: Gerät drehen (privat, nur Debug): 1 hoch, 2 kopfüber, 3 quer links, 4 quer rechts
+        ((void(*)(id,SEL,NSInteger))objc_msgSend)([UIDevice currentDevice],NSSelectorFromString(@"setOrientation:"),[rest integerValue]); }
+    else if([c isEqualToString:@"authexpired"]) [[NSNotificationCenter defaultCenter] postNotificationName:@"MMAuthExpired" object:nil];   // Anmeldung abgelaufen nachspielen
     else MMLog(@"debug: unbekannt");
 }
 
@@ -219,6 +249,12 @@ static void run(NSString*line){
 @end
 @implementation MMDebug
 + (void)load {
+    // Test 4-Zoll: liegt Library/Riff/.tall, meldet der Bildschirm 320x568 -> alle Seiten bauen sich wie auf einem iPod touch 5 auf
+    // ("shot" speichert dann das ganze 568er-Fenster; auf dem 3GS selbst ist unten etwas abgeschnitten)
+    if([[NSFileManager defaultManager] fileExistsAtPath:MMPath(@".tall")]){
+        method_setImplementation(class_getInstanceMethod([UIScreen class],@selector(bounds)), imp_implementationWithBlock(^CGRect(id s){ return CGRectMake(0,0,320,568); }));
+        method_setImplementation(class_getInstanceMethod([UIScreen class],@selector(applicationFrame)), imp_implementationWithBlock(^CGRect(id s){ return CGRectMake(0,20,320,548); }));
+    }
     dispatch_async(dispatch_get_main_queue(), ^{
         [NSTimer scheduledTimerWithTimeInterval:1.0 target:self selector:@selector(poll) userInfo:nil repeats:YES];
     });

@@ -1,5 +1,9 @@
 #import "MMTrackListController.h"
 #import "SpotTheme.h"
+#import "MMLayout.h"
+#import "MMArtistController.h"
+#import <objc/runtime.h>
+static char kRowKey;   // Zeilennummer am Artist-Label (Album-Seite)
 #import "MMSpotify.h"
 #import "MMRootController.h"
 #import "MMCovers.h"
@@ -31,7 +35,7 @@
     UIImageView *_hCover; UILabel *_hTitle, *_hSub, *_hInfo;
     BOOL _dlRunning;           // nach "Speichern" läuft der Download dieser Liste -> Kreisel statt Knopf
 }
-+ (BOOL)coverStyle { return [[NSUserDefaults standardUserDefaults] boolForKey:@"listCoverStyle"]; }
++ (BOOL)coverStyle { id v=[[NSUserDefaults standardUserDefaults] objectForKey:@"listCoverStyle"]; return v?[v boolValue]:YES; }   // Standard: an (wer es ausgeschaltet hat, behält aus)
 + (void)setCoverStyle:(BOOL)on { [[NSUserDefaults standardUserDefaults] setBool:on forKey:@"listCoverStyle"]; [[NSUserDefaults standardUserDefaults] synchronize]; }
 
 - (id)initWithTitle:(NSString *)title path:(NSString *)path {
@@ -40,7 +44,7 @@
 }
 
 - (void)loadView {
-    self.view=[[UIView alloc] initWithFrame:[UIScreen mainScreen].applicationFrame];
+    self.view=[[UIView alloc] initWithFrame:MMPageFrame(YES)];
     self.view.backgroundColor=[SpotTheme bg];
     CGFloat W=self.view.bounds.size.width, H=self.view.bounds.size.height;
 
@@ -63,7 +67,7 @@
 
     _table=[[UITableView alloc] initWithFrame:CGRectMake(0,46,W,H-46) style:UITableViewStylePlain];
     _table.backgroundColor=[SpotTheme bg]; _table.separatorStyle=UITableViewCellSeparatorStyleNone;
-    _table.dataSource=self; _table.delegate=self; _table.rowHeight=66; _table.contentInset=UIEdgeInsetsMake(0,0,90,0);
+    _table.dataSource=self; _table.delegate=self; _table.rowHeight=MMTrackRowH; _table.contentInset=UIEdgeInsetsMake(0,0,MMPageBottomInset(90),0);
     _table.autoresizingMask=UIViewAutoresizingFlexibleHeight|UIViewAutoresizingFlexibleWidth; [self.view addSubview:_table];
 
     if(_coverStyle) [self buildHeader];
@@ -79,6 +83,7 @@
     for(NSString*n in @[@"MMDownloadFull",@"MMDownloadError"]) [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(dlStopped) name:n object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(netChanged) name:@"MMNetworkChanged" object:nil];
     [self load];
+    MMAutoMask(self.view);   // iPad: Unteransichten folgen der Breite beim Drehen
 }
 
 // ---- Kopf der Cover-Ansicht ----
@@ -92,8 +97,10 @@
     _hTitle.numberOfLines=2; _hTitle.backgroundColor=[UIColor clearColor]; [h addSubview:_hTitle];
     _hSub=[[UILabel alloc] initWithFrame:CGRectMake(x,54,tw,32)]; _hSub.font=[UIFont boldSystemFontOfSize:12]; _hSub.textColor=[SpotTheme ink];
     _hSub.numberOfLines=2; _hSub.backgroundColor=[UIColor clearColor]; [h addSubview:_hSub];
+    if([_path hasPrefix:@"albums/"]){ _hSub.userInteractionEnabled=YES; [_hSub addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(headerArtistTap)]]; }
     _hInfo=[[UILabel alloc] initWithFrame:CGRectMake(x,86,tw,32)]; _hInfo.font=[UIFont systemFontOfSize:11]; _hInfo.textColor=[SpotTheme muted];
     _hInfo.numberOfLines=2; _hInfo.backgroundColor=[UIColor clearColor]; [h addSubview:_hInfo];
+    MMAutoMask(h);
     _table.tableHeaderView=h;
     [self updateHeader];
 }
@@ -186,11 +193,14 @@ static NSString* fmtDuration(long long ms){
         if(!tid) continue;   // NSNull/removed/local tracks überspringen
         NSString*nm=[t[@"name"] isKindOfClass:[NSString class]]?t[@"name"]:@"";
         id arts=t[@"artists"]; NSString*an=@"";
-        if([arts isKindOfClass:[NSArray class]] && [arts count]){ id a0=[arts objectAtIndex:0]; if([a0 isKindOfClass:[NSDictionary class]] && [a0[@"name"] isKindOfClass:[NSString class]]) an=a0[@"name"]; }
-        id alb=t[@"album"]; NSString*cov=@"";
-        if([alb isKindOfClass:[NSDictionary class]]) cov=[MMCovers bestURL:alb[@"images"]];   // scharfes (mittleres) Cover
+        NSString*aid=@"";
+        if([arts isKindOfClass:[NSArray class]] && [arts count]){ id a0=[arts objectAtIndex:0]; if([a0 isKindOfClass:[NSDictionary class]] && [a0[@"name"] isKindOfClass:[NSString class]]) an=a0[@"name"];
+            if([a0 isKindOfClass:[NSDictionary class]] && [a0[@"id"] isKindOfClass:[NSString class]]) aid=a0[@"id"]; }
+        id alb=t[@"album"]; NSString*cov=@"", *aln=@"";
+        if([alb isKindOfClass:[NSDictionary class]]){ cov=[MMCovers bestURL:alb[@"images"]];   // scharfes (mittleres) Cover
+            if([alb[@"name"] isKindOfClass:[NSString class]]) aln=alb[@"name"]; }   // Album-Spalte (iPad)
         id dur=t[@"duration_ms"];
-        [out addObject:@{@"id":tid,@"title":nm,@"artist":an,@"cover":cov?:@"",@"dur":[dur isKindOfClass:[NSNumber class]]?dur:@0}];
+        [out addObject:@{@"id":tid,@"title":nm,@"artist":an,@"artistId":aid,@"album":aln,@"cover":cov?:@"",@"dur":[dur isKindOfClass:[NSNumber class]]?dur:@0}];
     }
     return out;
 }
@@ -340,29 +350,53 @@ enum { kAlertRemove=1, kAlertSave=2 };
 - (void)tableView:(UITableView *)tv willDisplayCell:(UITableViewCell *)c forRowAtIndexPath:(NSIndexPath *)ip {
     if(_nextPath && !_loadingPage && ip.row >= (NSInteger)_tracks.count-8) [self loadNextPage];   // nahe Ende -> nächste Seite
 }
+// Zeilen: 56 pt hoch. iPad: rechts Spalten für Album (nicht auf Album-Seiten, da überall gleich) und Dauer.
+// Album-Seiten: Antippen des Artist-Namens öffnet den Artist (der Rest der Zeile spielt wie bisher).
 - (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
-    CGFloat W=tv.bounds.size.width;
-    UITableViewCell*c=[tv dequeueReusableCellWithIdentifier:@"r"];
-    if(!c){ c=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"r"];
+    CGFloat W=tv.bounds.size.width, RH=MMTrackRowH;
+    BOOL albumPage=[_path hasPrefix:@"albums/"], cols=MMIsPad(), albumCol=cols && !albumPage;
+    CGFloat timeX=W-32-8-48, albumX=floor(W*0.55), textR=cols?(albumCol?albumX-12:timeX-12):W-40;
+    UITableViewCell*c=[tv dequeueReusableCellWithIdentifier:MMCellID(@"r",tv)];
+    if(!c){ c=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:MMCellID(@"r",tv)];
         c.backgroundColor=[SpotTheme bg]; c.selectionStyle=UITableViewCellSelectionStyleNone;
         // Cover-Ansicht: Nummer vorn; Alben ohne Cover (alle gleich), Playlists mit kleinem Cover zwischen Nummer und Titel
-        BOOL num=_coverStyle, cover=!_coverStyle || ![_path hasPrefix:@"albums/"];
-        CGFloat tx=num?(cover?88:40):78;
-        if(num){ UILabel*no=[[UILabel alloc] initWithFrame:CGRectMake(4,0,30,66)]; no.tag=5; no.font=[UIFont systemFontOfSize:15]; no.textColor=[SpotTheme muted];
+        BOOL num=_coverStyle, cover=!_coverStyle || !albumPage;
+        CGFloat tx=num?(cover?84:40):70;
+        if(num){ UILabel*no=[[UILabel alloc] initWithFrame:CGRectMake(4,0,30,RH)]; no.tag=5; no.font=[UIFont systemFontOfSize:15]; no.textColor=[SpotTheme muted];
             no.textAlignment=NSTextAlignmentCenter; no.adjustsFontSizeToFitWidth=YES; [c.contentView addSubview:no]; }
-        if(cover){ UIImageView*cov=[[UIImageView alloc] initWithFrame:num?CGRectMake(36,11,44,44):CGRectMake(16,9,48,48)]; cov.tag=1; cov.backgroundColor=[SpotTheme card]; cov.layer.cornerRadius=4; cov.clipsToBounds=YES; cov.contentMode=UIViewContentModeScaleAspectFill; [c.contentView addSubview:cov]; }
-        UILabel*ti=[[UILabel alloc] initWithFrame:CGRectMake(tx,14,W-tx-40,20)]; ti.tag=2; ti.font=[UIFont boldSystemFontOfSize:15]; ti.textColor=[SpotTheme ink]; [c.contentView addSubview:ti];
-        UILabel*ar=[[UILabel alloc] initWithFrame:CGRectMake(tx,36,W-tx-40,18)]; ar.tag=3; ar.font=[SpotTheme sub]; ar.textColor=[SpotTheme muted]; [c.contentView addSubview:ar];
-        UIImageView*dl=[[UIImageView alloc] initWithFrame:CGRectMake(W-32,24,18,18)]; dl.tag=4; dl.contentMode=UIViewContentModeCenter; dl.autoresizingMask=UIViewAutoresizingFlexibleLeftMargin; [c.contentView addSubview:dl]; }
+        if(cover){ UIImageView*cov=[[UIImageView alloc] initWithFrame:num?CGRectMake(36,8,40,40):CGRectMake(16,6,44,44)]; cov.tag=1; cov.backgroundColor=[SpotTheme card]; cov.layer.cornerRadius=4; cov.clipsToBounds=YES; cov.contentMode=UIViewContentModeScaleAspectFill; [c.contentView addSubview:cov]; }
+        UILabel*ti=[[UILabel alloc] initWithFrame:CGRectMake(tx,9,textR-tx,20)]; ti.tag=2; ti.font=[UIFont boldSystemFontOfSize:15]; ti.textColor=[SpotTheme ink]; [c.contentView addSubview:ti];
+        UILabel*ar=[[UILabel alloc] initWithFrame:CGRectMake(tx,29,textR-tx,18)]; ar.tag=3; ar.font=[SpotTheme sub]; ar.textColor=[SpotTheme muted]; [c.contentView addSubview:ar];
+        if(albumPage){ ar.userInteractionEnabled=YES; [ar addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(rowArtistTap:)]]; }
+        if(albumCol){ UILabel*al=[[UILabel alloc] initWithFrame:CGRectMake(albumX,0,timeX-12-albumX,RH)]; al.tag=6; al.font=[SpotTheme sub]; al.textColor=[SpotTheme muted]; [c.contentView addSubview:al]; }
+        if(cols){ UILabel*tm=[[UILabel alloc] initWithFrame:CGRectMake(timeX,0,48,RH)]; tm.tag=7; tm.font=[SpotTheme sub]; tm.textColor=[SpotTheme muted]; tm.textAlignment=NSTextAlignmentRight; [c.contentView addSubview:tm]; }
+        UIImageView*dl=[[UIImageView alloc] initWithFrame:CGRectMake(W-32,(RH-18)/2,18,18)]; dl.tag=4; dl.contentMode=UIViewContentModeCenter; dl.autoresizingMask=UIViewAutoresizingFlexibleLeftMargin; [c.contentView addSubview:dl]; }
     NSDictionary*t=_tracks[ip.row];
     ((UILabel*)[c.contentView viewWithTag:2]).text=t[@"title"];
-    ((UILabel*)[c.contentView viewWithTag:3]).text=t[@"artist"];
+    UILabel*ar=(UILabel*)[c.contentView viewWithTag:3]; ar.text=t[@"artist"]; objc_setAssociatedObject(ar,&kRowKey,@(ip.row),OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if(albumPage){ CGRect f=ar.frame; f.size.width=MIN([t[@"artist"] sizeWithFont:ar.font].width+8,textR-f.origin.x); ar.frame=f; }   // nur der Name ist antippbar, der Rest der Zeile spielt
+    ((UILabel*)[c.contentView viewWithTag:6]).text=t[@"album"];
+    long long ms=[t[@"dur"] longLongValue]; ((UILabel*)[c.contentView viewWithTag:7]).text=ms>0?[NSString stringWithFormat:@"%lld:%02lld",ms/60000,(ms/1000)%60]:@"";
     ((UIImageView*)[c.contentView viewWithTag:4]).image=[MMSpotify isDownloaded:t[@"id"]]?[SpotTheme downloadedIcon:18]:nil;
     if(_coverStyle) ((UILabel*)[c.contentView viewWithTag:5]).text=[NSString stringWithFormat:@"%ld",(long)ip.row+1];
     UIImageView*cov=(UIImageView*)[c.contentView viewWithTag:1];
     if(cov){ cov.image=nil; [MMCovers load:t[@"cover"] into:cov]; }   // gemeinsamer RAM+Platte-Cache (reuse-sicher)
     c.contentView.alpha=(_offline && ![MMSpotify playableOffline:t[@"id"]])?0.35:1;   // offline nicht spielbar -> grau
     return c;
+}
+// Album-Seite: Artist-Name in einer Zeile oder im Kopf -> Artist-Seite
+- (void)rowArtistTap:(UITapGestureRecognizer *)g {
+    NSInteger r=[objc_getAssociatedObject(g.view,&kRowKey) integerValue];
+    if(r<0 || r>=(NSInteger)_tracks.count) return;
+    NSDictionary*t=_tracks[r]; [self openArtist:t[@"artistId"] name:t[@"artist"]];
+}
+- (void)headerArtistTap {
+    NSArray*a=_meta[@"artists"]; NSDictionary*a0=([a isKindOfClass:[NSArray class]] && a.count)?a[0]:nil;
+    if([a0 isKindOfClass:[NSDictionary class]]) [self openArtist:a0[@"id"] name:a0[@"name"]];
+}
+- (void)openArtist:(NSString *)aid name:(NSString *)name {
+    if(![aid isKindOfClass:[NSString class]] || !aid.length) return;
+    [[MMRootController shared] pushContent:[[MMArtistController alloc] initWithArtistId:aid name:name]];
 }
 // was ohne Netz spielt (heruntergeladen / im Song-Cache); online alles
 - (NSArray *)playableTracks {
@@ -374,7 +408,7 @@ enum { kAlertRemove=1, kAlertSave=2 };
     NSDictionary*t=_tracks[ip.row]; NSArray*list=[self playableTracks]; NSUInteger i=[list indexOfObject:t];
     if(i==NSNotFound) return;   // offline und nicht gespeichert: grau, spielt nicht
     [[MMRootController shared] playList:list index:(NSInteger)i context:[self context]];
-    [[MMRootController shared] openPlayer];   // Player als Vollbild; Titelliste bleibt darunter im Inhaltsbereich
+    if(!MMIsPad()) [[MMRootController shared] openPlayer];   // iPad: nur abspielen, die Leiste unten zeigt den Titel   // Player als Vollbild; Titelliste bleibt darunter im Inhaltsbereich
 }
 // Herkunft für den Verlauf: Lieblingssongs, Playlist oder Album (Cover = Albumcover des ersten Titels)
 - (NSDictionary *)context {
@@ -391,4 +425,5 @@ enum { kAlertRemove=1, kAlertSave=2 };
 - (void)dlRefresh { if(![MMSpotify isDownloading]) _dlRunning=NO; [self updateDlState]; [_table reloadData]; }
 - (void)dlStopped { _dlRunning=NO; [self updateDlState]; [_table reloadData]; }   // nach Download-Ende ✓-Marken aktualisieren
 - (void)dealloc { [[NSNotificationCenter defaultCenter] removeObserver:self]; }
+- (void)relayoutForSize:(CGSize)size { [_table reloadData]; }   // iPad gedreht: Zellen in neuer Breite
 @end

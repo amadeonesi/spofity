@@ -46,6 +46,7 @@
 + (void)setCoverFlowOnRotate:(BOOL)on;
 // Ansicht im Inhaltsbereich öffnen/schließen (bleibt über Tab-/Now-Playing-/Download-Leiste)
 - (void)pushContent:(UIViewController *)vc;
+- (CGRect)contentBounds;      // Größe des Inhaltsbereichs (iPad: rechts neben der Seitenleiste, über der Player-Leiste)
 - (CGFloat)bottomBarsHeight;   // Höhe der gerade sichtbaren Leisten über der Tab-Leiste (Now-Playing + Download)
 - (void)popContent;
 // globale Offline-Download-Leiste (immer sichtbar wenn aktiv)

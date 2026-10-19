@@ -1,5 +1,6 @@
 #import "MMSettingsController.h"
 #import "SpotTheme.h"
+#import "MMLayout.h"
 #import "MMSpotify.h"
 #import "MMRootController.h"
 #import "MMTrackListController.h"
@@ -19,7 +20,7 @@
 }
 
 - (void)loadView {
-    self.view=[[UIView alloc] initWithFrame:[UIScreen mainScreen].applicationFrame];
+    self.view=[[UIView alloc] initWithFrame:MMPageFrame(YES)];
     self.view.backgroundColor=[SpotTheme bg];
     CGFloat W=self.view.bounds.size.width, H=self.view.bounds.size.height;
     UIButton*back=[UIButton buttonWithType:UIButtonTypeCustom]; back.frame=CGRectMake(8,8,80,34);
@@ -32,10 +33,11 @@
     _table=[[UITableView alloc] initWithFrame:CGRectMake(0,46,W,H-46) style:UITableViewStylePlain];
     _table.backgroundColor=[SpotTheme bg]; _table.separatorStyle=UITableViewCellSeparatorStyleNone;
     _table.dataSource=self; _table.delegate=self; _table.rowHeight=54;
-    _table.contentInset=_table.scrollIndicatorInsets=UIEdgeInsetsMake(0,0,90,0); _table.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;
+    _table.contentInset=_table.scrollIndicatorInsets=UIEdgeInsetsMake(0,0,MMPageBottomInset(90),0); _table.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;
     [self.view addSubview:_table];
     [self build];
     for(NSString*n in @[@"MMDownloadsChanged",@"MMDownloadDone"]) [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(refresh) name:n object:nil];
+    MMAutoMask(self.view);   // iPad: Unteransichten folgen der Breite beim Drehen
 }
 - (void)refresh { [self build]; [_table reloadData]; }   // z. B. nach dem Löschen auf der Downloads-Seite
 - (void)dealloc { [[NSNotificationCenter defaultCenter] removeObserver:self]; }
@@ -44,8 +46,10 @@
     NSArray*dl=[MMSpotify downloadedTracks]; long long dlBytes=0; for(NSDictionary*d in dl) dlBytes+=[d[@"bytes"] longLongValue];
     _sections=@[
       @{@"title":L(@"Display"),@"footer":L(@"Big covers: albums and playlists open with their cover at the top and numbered songs."),
-        @"rows":@[@{@"kind":@"switch",@"title":L(@"Cover Flow when rotated"),@"key":@"cflow"},
-                  @{@"kind":@"switch",@"title":L(@"Big album covers"),@"key":@"cover"}]},
+        @"rows":MMIsPad()?@[@{@"kind":@"switch",@"title":L(@"Cover Flow in sidebar"),@"key":@"cflow"},   // iPad: Drehen dreht das Layout, Cover Flow kommt aus der Seitenleiste
+                            @{@"kind":@"switch",@"title":L(@"Big album covers"),@"key":@"cover"}]
+                         :@[@{@"kind":@"switch",@"title":L(@"Cover Flow when rotated"),@"key":@"cflow"},
+                            @{@"kind":@"switch",@"title":L(@"Big album covers"),@"key":@"cover"}]},
       @{@"title":L(@"Notification Center"),@"footer":L(@"Shows the current song with play, back and next in Notification Center."),
         @"rows":@[@{@"kind":@"switch",@"title":L(@"Now playing widget"),@"key":@"ncw"}]},
       @{@"title":L(@"Search"),@"footer":L(@"Search uses your own free Spotify developer key."),
@@ -168,4 +172,5 @@ static UIImage* chevron(void){
     else if([key isEqual:@"clearcache"]){ [MMSpotify clearSongCache]; [self build]; [_table reloadData]; }
 }
 - (void)close { [[MMRootController shared] popContent]; }
+- (void)relayoutForSize:(CGSize)size { [_table reloadData]; }   // iPad gedreht: Zellen in neuer Breite
 @end

@@ -1,5 +1,6 @@
 #import "MMSpotify.h"
 #import "MMAudio.h"
+#import <libkern/OSAtomic.h>
 #import "shannon.h"
 #import <UIKit/UIKit.h>
 #import <CommonCrypto/CommonCrypto.h>
@@ -19,6 +20,7 @@
 #import "mbedtls/net_sockets.h"
 #import "mbedtls/ctr_drbg.h"
 #import "mbedtls/entropy.h"
+#import "mbedtls/aes.h"
 #import "mbedtls/x509_crt.h"
 #import "psa/crypto.h"
 #import "MMCovers.h"
@@ -220,11 +222,49 @@ static NSString*hexd(const unsigned char*b,int n){NSMutableString*m=[NSMutableSt
 @interface MMSpotify ()
 + (BOOL)resolveTrack:(NSString *)b62 cdn:(NSString **)cdnOut key:(NSData **)keyOut err:(NSString **)err;
 + (NSData *)downloadDecrypt:(NSString *)cdn key:(NSData *)keyData err:(NSString **)err;
++ (NSData *)downloadDecrypt:(NSString *)cdn key:(NSData *)keyData err:(NSString **)err progress:(void(^)(double frac))progress;
 + (NSData *)loadAudioData:(NSString *)b62 err:(NSString **)err;
 + (void)postDlProgress;
 + (void)dlStep;
 + (void)dlFinishTrack:(NSString *)tid;
 @end
+
+// Download mit Fortschritt: NSURLConnection auf dem Runloop des aufrufenden (Hintergrund-)Threads, bis fertig
+@interface MMCdnLoad : NSObject { @public NSMutableData*data; long long expected, received; NSInteger status; NSError*error; BOOL done, chunked; double lastFrac;
+    void(^progress)(double); BOOL(^onResponse)(long long expected); BOOL(^onChunk)(NSData*); BOOL responded; }
+@end
+@implementation MMCdnLoad
+// onResponse sagt, ob der Aufrufer die Häppchen selbst nimmt (Wiedergabe während des Downloads); sonst wird gesammelt
+- (void)connection:(NSURLConnection *)c didReceiveResponse:(NSURLResponse *)r {
+    if(responded && chunked){ [c cancel]; error=[NSError errorWithDomain:@"CDN" code:-3 userInfo:@{NSLocalizedDescriptionKey:@"second response"}]; done=YES; return; }   // Puffer liegt schon an
+    responded=YES;
+    status=[r isKindOfClass:[NSHTTPURLResponse class]]?((NSHTTPURLResponse*)r).statusCode:200; expected=r.expectedContentLength; received=0;
+    chunked=(status==200 && onChunk && onResponse && expected<=60LL*1024*1024 && onResponse(expected));   // unsinnige Länge: normal laden
+    data=chunked?nil:[NSMutableData dataWithCapacity:expected>0?(NSUInteger)expected:4<<20]; }
+- (void)connection:(NSURLConnection *)c didReceiveData:(NSData *)d {
+    received+=d.length;
+    if(chunked){ if(!onChunk(d)){ [c cancel]; error=[NSError errorWithDomain:@"CDN" code:-4 userInfo:@{NSLocalizedDescriptionKey:@"cancelled"}]; done=YES; return; } }   // überholt: abbrechen
+    else [data appendData:d];
+    if(progress && expected>0){ double f=(double)received/expected; if(f-lastFrac>=0.02 || f>=1){ lastFrac=f; progress(f); } } }   // höchstens alle 2 %
+- (void)connectionDidFinishLoading:(NSURLConnection *)c { done=YES; }
+- (void)connection:(NSURLConnection *)c didFailWithError:(NSError *)e { error=e; done=YES; }
+@end
+static NSMutableData* cdnFetchEx(NSString*url, NSError**err, void(^progress)(double), BOOL(^onResponse)(long long), BOOL(^onChunk)(NSData*));
+static NSMutableData* cdnFetch(NSString*url, NSError**err, void(^progress)(double)){ return cdnFetchEx(url,err,progress,nil,nil); }
+// Rückgabe nil + *err = Fehler; im Häppchen-Modus bei Erfolg ein leerer Puffer (die Daten hat onChunk bekommen)
+static NSMutableData* cdnFetchEx(NSString*url, NSError**err, void(^progress)(double), BOOL(^onResponse)(long long), BOOL(^onChunk)(NSData*)){
+    // 15 s ohne neue Daten = abbrechen (vorher hing ein stockender Download über 100 s und hielt alles dahinter auf)
+    NSURLRequest*rq=[NSURLRequest requestWithURL:[NSURL URLWithString:url] cachePolicy:NSURLRequestReloadIgnoringLocalCacheData timeoutInterval:15];
+    MMCdnLoad*l=[MMCdnLoad new]; l->progress=progress; l->onResponse=onResponse; l->onChunk=onChunk;
+    NSURLConnection*c=rq.URL?[[NSURLConnection alloc] initWithRequest:rq delegate:l startImmediately:NO]:nil;
+    if(!c){ if(err)*err=[NSError errorWithDomain:@"CDN" code:-1 userInfo:@{NSLocalizedDescriptionKey:@"bad CDN URL"}]; return nil; }
+    [c scheduleInRunLoop:[NSRunLoop currentRunLoop] forMode:NSDefaultRunLoopMode]; [c start];
+    while(!l->done) @autoreleasepool { [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.5]]; }
+    if(l->error){ if(err)*err=l->error; return nil; }
+    if(l->status!=200){ if(err)*err=[NSError errorWithDomain:@"HTTP" code:l->status userInfo:@{NSLocalizedDescriptionKey:[NSString stringWithFormat:@"HTTP %ld",(long)l->status]}]; return nil; }
+    if(l->chunked && l->expected>0 && l->received!=l->expected){ if(err)*err=[NSError errorWithDomain:@"CDN" code:-2 userInfo:@{NSLocalizedDescriptionKey:@"download incomplete"}]; return nil; }
+    return l->chunked?[NSMutableData data]:l->data;
+}
 
 @implementation MMSpotify
 
@@ -441,6 +481,7 @@ static NSData* mercuryRC(NSString*uri){
     NSString*alid=album?gidToBase62(psub(album,1)):nil; if(alid) info[@"albumId"]=alid;
     if(album&&psub(album,2)) info[@"album"]=[[NSString alloc] initWithData:psub(album,2) encoding:NSUTF8StringEncoding]?:@"";
     NSString*arid=arts.count?gidToBase62(psub(arts[0],1)):nil; if(arid) info[@"artistId"]=arid;
+    int64_t zz=pvarval(meta,7); if(zz>0){ int64_t ms=(zz>>1)^-(zz&1); if(ms>0) info[@"durMs"]=@(ms); }   // Länge (sint32, ZigZag)
     return info;
 }
 
@@ -449,9 +490,12 @@ static NSData* mercuryRC(NSString*uri){
 static NSMutableDictionary *gCache=nil;   // trackId -> NSData (entschlüsseltes Ogg)
 static NSMutableArray *gCacheOrder=nil;    // LRU, ältester zuerst
 static NSMutableSet *gInflight=nil;        // Tracks, die gerade vorgeladen werden
-static void cacheInit(void){ if(!gCache){ gCache=[NSMutableDictionary dictionary]; gCacheOrder=[NSMutableArray array]; gInflight=[NSMutableSet set]; } }
-static NSData* cacheGet(NSString*tid){ @synchronized(gCache?:(gCache=[NSMutableDictionary dictionary])){ cacheInit(); NSData*d=gCache[tid]; if(d){ [gCacheOrder removeObject:tid]; [gCacheOrder addObject:tid]; } return d; } }
-static void cachePut(NSString*tid,NSData*d){ @synchronized(gCache){ cacheInit(); if(gCache[tid])[gCacheOrder removeObject:tid]; gCache[tid]=d; [gCacheOrder addObject:tid]; while(gCacheOrder.count>CACHE_MAX){ NSString*old=gCacheOrder[0]; [gCacheOrder removeObjectAtIndex:0]; [gCache removeObjectForKey:old]; } } }
+// Alle drei immer zusammen anlegen und nur über cacheLock() sperren. (Früher legte cacheGet gCache allein an; dann blieben
+// LRU-Liste und Vorlade-Menge nil: jeder gespielte Song blieb im RAM, und "auf laufendes Vorladen warten" griff nie.)
+static void cacheInit(void){ static dispatch_once_t once; dispatch_once(&once, ^{ gCache=[NSMutableDictionary dictionary]; gCacheOrder=[NSMutableArray array]; gInflight=[NSMutableSet set]; }); }
+static id cacheLock(void){ cacheInit(); return gCache; }
+static NSData* cacheGet(NSString*tid){ @synchronized(cacheLock()){ NSData*d=gCache[tid]; if(d){ [gCacheOrder removeObject:tid]; [gCacheOrder addObject:tid]; } return d; } }
+static void cachePut(NSString*tid,NSData*d){ @synchronized(cacheLock()){ cacheInit(); if(gCache[tid])[gCacheOrder removeObject:tid]; gCache[tid]=d; [gCacheOrder addObject:tid]; while(gCacheOrder.count>CACHE_MAX){ NSString*old=gCacheOrder[0]; [gCacheOrder removeObjectAtIndex:0]; [gCache removeObjectForKey:old]; } } }
 // ---- Offline-Disk-Cache (heruntergeladene Playlists) ----
 static NSString* diskDir(void){ NSString*d=MMPath(@".spotcache"); [[NSFileManager defaultManager] createDirectoryAtPath:d withIntermediateDirectories:YES attributes:nil error:NULL]; return d; }
 static NSString* diskPath(NSString*tid){ return [NSString stringWithFormat:@"%@/%@.ogg", diskDir(), tid]; }
@@ -566,15 +610,29 @@ static NSArray*gLastCdns;   // alle CDN-Adressen der letzten Auflösung (Diagnos
     return YES;
 }
 
+// AES-128-CTR (Zähler big-endian ab AUDIO_IV) mit mbedTLS: CommonCryptos CTR zählt unter iOS 5 den Zähler falsch hoch
+// (ab Byte 16 Datenmüll -> stb_vorbis Fehler 30). Auf dem 3GS ist mbedTLS gleich schnell (8 MB: 0.73 s, CommonCrypto 0.78 s).
+typedef struct { mbedtls_aes_context ac; unsigned char ctr[16], stream[16]; size_t off; } MMCtr;   // CTR-Zustand über Häppchen hinweg
+static MMCtr* ctrNew(const void*key){ MMCtr*c=calloc(1,sizeof(MMCtr)); mbedtls_aes_init(&c->ac); mbedtls_aes_setkey_enc(&c->ac,key,128); memcpy(c->ctr,AUDIO_IV,16); return c; }
+static void ctrRun(MMCtr*c,const void*in,void*out,size_t n){ mbedtls_aes_crypt_ctr(&c->ac,n,&c->off,c->ctr,c->stream,in,out); }
+static void ctrFree(MMCtr*c){ if(c){ mbedtls_aes_free(&c->ac); free(c); } }
+static void aesCTR_mbed(const void*key,const void*in,void*out,size_t n){
+    mbedtls_aes_context ac; mbedtls_aes_init(&ac); mbedtls_aes_setkey_enc(&ac,key,128);
+    unsigned char ctr[16],stream[16]; size_t off=0; memcpy(ctr,AUDIO_IV,16);
+    mbedtls_aes_crypt_ctr(&ac,n,&off,ctr,stream,in,out); mbedtls_aes_free(&ac);
+}
+
 // Großer CDN-Download + AES-CTR-Entschlüsselung. Braucht KEINEN Socket -> darf abseits der spotQ laufen.
-+ (NSData *)downloadDecrypt:(NSString *)cdn key:(NSData *)keyData err:(NSString **)err {
++ (NSData *)downloadDecrypt:(NSString *)cdn key:(NSData *)keyData err:(NSString **)err { return [self downloadDecrypt:cdn key:keyData err:err progress:nil]; }
++ (NSData *)downloadDecrypt:(NSString *)cdn key:(NSData *)keyData err:(NSString **)err progress:(void(^)(double frac))progress {
     NSError*ne=nil; CFAbsoluteTime t0=CFAbsoluteTimeGetCurrent();
-    NSData*enc=[NSData dataWithContentsOfURL:[NSURL URLWithString:cdn] options:0 error:&ne];
+    NSMutableData*enc=cdnFetch(cdn,&ne,progress);
     slog(@"cdn download %@: %.1f MB in %.1fs%@",[NSURL URLWithString:cdn].host,enc.length/1048576.0,CFAbsoluteTimeGetCurrent()-t0,ne?[@" error: " stringByAppendingString:ne.localizedDescription]:@"");
     if(!enc.length){ if(err)*err=[NSString stringWithFormat:@"CDN download failed (%@)",ne.localizedDescription?:@"empty"]; return nil; }
-    NSMutableData*out=[NSMutableData dataWithLength:enc.length];size_t moved=0;CCCryptorRef cr;
-    CCCryptorCreateWithMode(kCCDecrypt,kCCModeCTR,kCCAlgorithmAES,ccNoPadding,AUDIO_IV,keyData.bytes,16,NULL,0,0,kCCModeOptionCTR_BE,&cr);
-    CCCryptorUpdate(cr,enc.bytes,enc.length,out.mutableBytes,out.length,&moved);CCCryptorRelease(cr);
+    CFAbsoluteTime t1=CFAbsoluteTimeGetCurrent();
+    NSMutableData*out=enc;   // an Ort und Stelle (mbedTLS-CTR erlaubt gleichen Ein- und Ausgabepuffer): keine zweite Kopie in Songgröße
+    aesCTR_mbed(keyData.bytes,enc.bytes,out.mutableBytes,enc.length);
+    slog(@"decrypt %.1f MB in %.2fs",enc.length/1048576.0,CFAbsoluteTimeGetCurrent()-t1);
     return out;
 }
 
@@ -595,12 +653,22 @@ static NSArray*gLastCdns;   // alle CDN-Adressen der letzten Auflösung (Diagnos
 + (void)prefetchTrack:(NSString *)trackId {
     if(!trackId.length) return;
     if(cacheGet(trackId) || diskHas(trackId)) return;   // schon im RAM oder heruntergeladen
-    @synchronized(gCache){ cacheInit(); if([gInflight containsObject:trackId]) return; [gInflight addObject:trackId]; }
+    // Lädt gerade ein angetippter Titel: nicht um die Bandbreite konkurrieren, danach vorladen
+    @synchronized([MMSpotify class]){ if(gPlayDownloads>0){ gDeferredPrefetch=trackId; slog(@"prefetch %@ zurückgestellt (Titel lädt noch)",trackId); return; } }
+    @synchronized(cacheLock()){ cacheInit(); if([gInflight containsObject:trackId]) return; [gInflight addObject:trackId]; }
+    // Nur das kurze Auflösen (Socket) läuft auf der spotQ; der große Download daneben, damit ein angetippter Titel nicht
+    // hinter dem ganzen Vorab-Download warten muss.
+    void (^finish)(NSData*,BOOL,NSString*)=^(NSData*d,BOOL hit,NSString*e){
+        if(d.length){ cachePut(trackId,d); slog(@"prefetch bereit: %@%@", trackId, hit?@" (Song-Cache)":@""); } else slog(@"prefetch fail: %@ (%@)",trackId,e);
+        @synchronized(cacheLock()){ [gInflight removeObject:trackId]; }
+    };
     dispatch_async(spotQ(), ^{
-        if(!cacheGet(trackId)){ NSString*e=nil; NSData*d=streamLoad(trackId); BOOL hit=d.length>0;
-            if(!hit){ d=[self loadAudioData:trackId err:&e]; if(d.length) streamStore(trackId,d); }
-            if(d.length){ cachePut(trackId,d); slog(@"prefetch bereit: %@%@", trackId, hit?@" (Song-Cache)":@""); } else slog(@"prefetch fail: %@ (%@)",trackId,e); }
-        @synchronized(gCache){ [gInflight removeObject:trackId]; }
+        if(cacheGet(trackId)){ @synchronized(cacheLock()){ [gInflight removeObject:trackId]; } return; }
+        NSData*sd=streamLoad(trackId); if(sd.length){ finish(sd,YES,nil); return; }
+        NSString*cdn=nil, *e=nil; NSData*key=nil;
+        if(![self resolveTrack:trackId cdn:&cdn key:&key err:&e]){ finish(nil,NO,e); return; }
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW,0), ^{
+            NSString*e2=nil; NSData*d=[self downloadDecrypt:cdn key:key err:&e2]; if(d.length) streamStore(trackId,d); finish(d,NO,e2); });
     });
 }
 
@@ -810,7 +878,18 @@ static NSString *offlinePath(void){ return [diskDir() stringByAppendingPathCompo
     });
 }
 
-+ (void)playTrack:(NSString *)trackId completion:(void(^)(BOOL,NSString*))done {
+static NSUInteger gPlayGen=0;   // jede Wiedergabe-Anfrage zählt hoch; nur die neueste darf am Ende abspielen
++ (void)playTrack:(NSString *)trackId completion:(void(^)(BOOL,NSString*))done { [self playTrack:trackId stream:YES completion:done]; }
+static NSInteger gPlayDownloads=0; static NSString*gStreamingId=nil, *gDeferredPrefetch=nil; static __weak MMAudioStream*gStreamingObj=nil;   // angetippter Titel lädt gerade (Vorladen wartet)
+#define STREAM_START (512*1024)   // ab so vielen Bytes spielt der Titel schon (der Rest lädt weiter)
+// stream=NO: erst ganz laden (z. B. Fortsetzen an einer gespeicherten Stelle: Spulen braucht die ganze Datei)
++ (void)playTrack:(NSString *)trackId stream:(BOOL)stream completion:(void(^)(BOOL,NSString*))done {
+    // Läuft genau dieser Titel schon als Stream: nichts stoppen, nichts neu starten (vor dem Hochzählen, damit sein Start gilt)
+    // (nur wenn genau dieser Stream gerade zu hören ist; sonst normal neu laden)
+    BOOL same; @synchronized([MMSpotify class]){ same=[gStreamingId isEqualToString:trackId] && gStreamingObj && gStreamingObj==[MMAudio currentStream]; }
+    if(same && stream && [MMAudio isBuffering]){ slog(@"playTrack %@ spielt schon (lädt noch)",trackId);
+        dispatch_async(dispatch_get_main_queue(), ^{ if(done)done(YES,nil); }); return; }
+    NSUInteger gen; @synchronized([MMSpotify class]){ gen=++gPlayGen; }
     // Cache-Hit (RAM vorgeladen / Disk heruntergeladen) -> sofort abspielen, kein Netz
     NSData*cd=cacheGet(trackId);
     if(!cd && diskHas(trackId)){ cd=[NSData dataWithContentsOfFile:diskPath(trackId)]; if(cd.length){ cachePut(trackId,cd); slog(@"playTrack Disk-Hit %@",trackId); } }
@@ -822,15 +901,67 @@ static NSString *offlinePath(void){ return [diskDir() stringByAppendingPathCompo
     dispatch_async(dispatch_get_main_queue(), ^{ [MMAudio stop]; });  // alten Track sofort stoppen
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH,0), ^{   // Song-Cache lesen, ohne hinter einem Vorladen auf der spotQ zu warten
         NSData*sd=streamLoad(trackId);
-        if(sd.length){ cachePut(trackId,sd); gLoading=NO; slog(@"playTrack Song-Cache-Hit %@",trackId);
+        if(sd.length){ cachePut(trackId,sd);
+            BOOL current; @synchronized([MMSpotify class]){ current=(gen==gPlayGen); }
+            if(!current){ slog(@"playTrack %@ überholt (neuerer Titel angetippt)",trackId); return; }
+            gLoading=NO; slog(@"playTrack Song-Cache-Hit %@",trackId);
             dispatch_async(dispatch_get_main_queue(), ^{ [MMAudio playOgg:sd]; if(done)done(YES,nil); });
             return; }
-        dispatch_async(spotQ(), ^{
-            NSString*err=nil; NSData*d=[self loadAudioData:trackId err:&err];
-            if(d.length){ cachePut(trackId,d); streamStore(trackId,d); }   // gespielten Track auch cachen (zurück = sofort, später ohne Netz)
-            else slog(@"playTrack fail %@: %@", trackId, err?:@"?");
+        void (^play)(NSData*,NSString*)=^(NSData*d,NSString*err){
+            BOOL current; @synchronized([MMSpotify class]){ current=(gen==gPlayGen); }
+            if(!current){ slog(@"playTrack %@ überholt (neuerer Titel angetippt)",trackId); return; }   // Daten liegen trotzdem im Cache
+            if(!d.length) slog(@"playTrack fail %@: %@", trackId, err?:@"?");
             gLoading=NO;
             dispatch_async(dispatch_get_main_queue(), ^{ if(d.length)[MMAudio playOgg:d]; if(done)done(d.length>0,err); });
+        };
+        // Wird genau dieser Titel gerade vorgeladen: darauf warten statt ein zweites Mal herunterzuladen
+        BOOL inflight; @synchronized(cacheLock()){ cacheInit(); inflight=[gInflight containsObject:trackId]; }
+        if(inflight){ CFAbsoluteTime tw=CFAbsoluteTimeGetCurrent();
+            while(CFAbsoluteTimeGetCurrent()-tw<90){ BOOL still, current; @synchronized(cacheLock()){ still=[gInflight containsObject:trackId]; } @synchronized([MMSpotify class]){ current=(gen==gPlayGen); }
+                if(!still || !current) break; usleep(200000); }
+            NSData*pd=cacheGet(trackId); slog(@"playTrack %@: Vorladen abgewartet (%.1fs)%@",trackId,CFAbsoluteTimeGetCurrent()-tw,pd?@"":@", ohne Erfolg");
+            if(pd.length){ play(pd,nil); return; } }
+        // sonst: nur das kurze Auflösen auf der spotQ, Download daneben (nicht hinter einem anderen Vorab-Download).
+        // Solange er lädt, steht der Titel in gInflight: ein zweiter Tipp (oder ein Vorladen) wartet darauf.
+        @synchronized(cacheLock()){ [gInflight addObject:trackId]; }
+        void (^play0)(NSData*,NSString*)=play;
+        play=^(NSData*d,NSString*err){ @synchronized(cacheLock()){ [gInflight removeObject:trackId]; } play0(d,err); };
+        dispatch_async(spotQ(), ^{
+            NSData*cd2=cacheGet(trackId); if(cd2.length){ play(cd2,nil); return; }
+            NSString*cdn=nil, *err=nil; NSData*key=nil;
+            if(![self resolveTrack:trackId cdn:&cdn key:&key err:&err]){ play(nil,err); return; }
+            dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH,0), ^{
+                // Wiedergabe während des Downloads: Häppchen gleich entschlüsseln und ab STREAM_START schon abspielen
+                @synchronized([MMSpotify class]){ gPlayDownloads++; gStreamingId=trackId; }
+                __block MMAudioStream*st=nil; __block NSUInteger off=0; __block BOOL started=NO;
+                MMCtr*cs=ctrNew(key.bytes); CFAbsoluteTime t0=CFAbsoluteTimeGetCurrent(); NSError*ne=nil;
+                NSMutableData*full=cdnFetchEx(cdn,&ne,^(double f){   // grüner Ladebalken in Leiste/Player
+                        dispatch_async(dispatch_get_main_queue(), ^{ [[NSNotificationCenter defaultCenter] postNotificationName:MMTrackLoadProgress object:nil userInfo:@{@"id":trackId,@"frac":@(f)}]; }); },
+                    ^BOOL(long long expected){ if(!stream || expected<=STREAM_START || st) return NO;   // klein, Länge unbekannt oder Fortsetzen: wie bisher ganz laden
+                        st=[[MMAudioStream alloc] initWithLength:(NSUInteger)expected]; if(!st.data) return NO;
+                        @synchronized([MMSpotify class]){ gStreamingObj=st; } return YES; },
+                    ^BOOL(NSData*chunk){
+                        if(!started){ BOOL cur; @synchronized([MMSpotify class]){ cur=(gen==gPlayGen); } if(!cur) return NO; }   // vor dem Start überholt: Download abbrechen
+                        NSUInteger n=MIN(chunk.length,st.data.length-off);
+                        ctrRun(cs,chunk.bytes,(unsigned char*)st.data.mutableBytes+off,n); off+=n;
+                        OSMemoryBarrier(); st.avail=off;   // erst die Bytes, dann die Grenze (Mehrkern-iPads)
+                        if(!started && off>=STREAM_START){ started=YES;
+                            BOOL current; @synchronized([MMSpotify class]){ current=(gen==gPlayGen); }
+                            if(current){ gLoading=NO; slog(@"stream %@: spielt nach %.1fs (%.1f von %.1f MB)",trackId,CFAbsoluteTimeGetCurrent()-t0,off/1048576.0,st.data.length/1048576.0);
+                                MMAudioStream*s2=st; dispatch_async(dispatch_get_main_queue(), ^{ [MMAudio playStream:s2]; if(done)done(YES,nil); }); } }
+                        return YES; });
+                NSData*d=nil; NSString*e2=ne?[NSString stringWithFormat:@"CDN download failed (%@)",ne.localizedDescription]:nil;
+                if(st){ OSMemoryBarrier(); if(!ne && off==st.data.length){ st.complete=YES; d=st.data; } else st.failed=YES; }   // lief die Wiedergabe schon, hört sie am Ende des Geladenen auf
+                else if(full.length){ ctrRun(cs,full.bytes,full.mutableBytes,full.length); d=full; }
+                ctrFree(cs);
+                slog(@"cdn download %@: %.1f MB in %.1fs%@%@",[NSURL URLWithString:cdn].host,(st?off:full.length)/1048576.0,CFAbsoluteTimeGetCurrent()-t0,st?@" (Stream)":@"",ne?[@" error: " stringByAppendingString:ne.localizedDescription]:@"");
+                NSString*dp=nil;
+                @synchronized([MMSpotify class]){ gPlayDownloads--; if([gStreamingId isEqualToString:trackId]) gStreamingId=nil; if(!gPlayDownloads){ dp=gDeferredPrefetch; gDeferredPrefetch=nil; } }
+                if(d.length){ cachePut(trackId,d); streamStore(trackId,d); }   // gespielten Track auch cachen (zurück = sofort, später ohne Netz)
+                if(started){ @synchronized(cacheLock()){ [gInflight removeObject:trackId]; } if(!d.length) slog(@"playTrack fail %@: %@", trackId, e2?:@"?"); }
+                else play(d,e2);
+                if(dp){ slog(@"prefetch %@ nachgeholt",dp); [self prefetchTrack:dp]; }   // nachgeholtes Vorladen des nächsten Titels
+            });
         });
     });
 }
@@ -1389,7 +1520,7 @@ static NSDictionary* spInternalGet(NSString*path,int*st,BOOL*handled){
             NSMutableData*it=[NSMutableData data]; pstr(it,1,[@"spotify:track:" stringByAppendingString:trackId]);
             pvarf(it,2,(uint64_t)[[NSDate date] timeIntervalSince1970]); if(!on) pvarf(it,3,1);
             NSMutableData*req=[NSMutableData data]; pstr(req,1,user); pstr(req,2,@"collection"); pmsg(req,3,it);
-            pstr(req,4,[[[NSUUID UUID] UUIDString] lowercaseString]);
+            CFUUIDRef uu=CFUUIDCreate(NULL); pstr(req,4,[(NSString *)CFBridgingRelease(CFUUIDCreateString(NULL,uu)) lowercaseString]); CFRelease(uu);   // NSUUID erst ab iOS 6
             NSString*ct=@"application/vnd.collection-v2.spotify.proto"; int st=0;
             NSData*d=spReq(@"POST",@"/collection/v2/write",req,ct,ct,&st);
             ok=(st>=200&&st<300);
@@ -1592,7 +1723,7 @@ static void reachChanged(SCNetworkReachabilityRef r,SCNetworkReachabilityFlags f
     dispatch_async(spotQ(), ^{
         if(gSock>=0){ close(gSock); gSock=-1; }
         gToken=nil; gClientToken=nil; gSpclient=nil; gLiked=nil; gLikedAt=0; gRefreshDead=NO; gRefreshedAt=0; gLoginRejected=NO; gLog=nil;
-        @synchronized([MMSpotify class]){ [gCache removeAllObjects]; [gCacheOrder removeAllObjects]; [gInflight removeAllObjects]; }
+        @synchronized(cacheLock()){ [gCache removeAllObjects]; [gCacheOrder removeAllObjects]; [gInflight removeAllObjects]; }
     });
     // Löschen wartet nicht auf die spotQ
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_HIGH, 0), ^{

@@ -1,6 +1,7 @@
 #import "MMSongMenu.h"
 #import <objc/runtime.h>
 #import "SpotTheme.h"
+#import "MMLayout.h"
 #import "MMSpotify.h"
 #import "MMRootController.h"
 #import "MMSheet.h"
@@ -18,7 +19,7 @@
     NSArray *_lists;   // @[ {id,name,cover} ]
 }
 - (void)loadView {
-    self.view=[[UIView alloc] initWithFrame:[UIScreen mainScreen].applicationFrame];
+    self.view=[[UIView alloc] initWithFrame:MMPageFrame(YES)];
     self.view.backgroundColor=[SpotTheme bg];
     CGFloat W=self.view.bounds.size.width, H=self.view.bounds.size.height;
     UIButton*back=[UIButton buttonWithType:UIButtonTypeCustom]; back.frame=CGRectMake(8,8,70,34);
@@ -45,11 +46,12 @@
         _lists=out; _hint.hidden=(out.count>0); if(!out.count) _hint.text=L(@"You have no playlists of your own yet.");
         [_table reloadData];
     }];
+    MMAutoMask(self.view);
 }
 - (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)s { return _lists.count; }
 - (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
-    UITableViewCell*c=[tv dequeueReusableCellWithIdentifier:@"r"];
-    if(!c){ c=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"r"]; c.backgroundColor=[SpotTheme bg]; c.selectionStyle=UITableViewCellSelectionStyleNone;
+    UITableViewCell*c=[tv dequeueReusableCellWithIdentifier:MMCellID(@"r",tv)];
+    if(!c){ c=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:MMCellID(@"r",tv)]; c.backgroundColor=[SpotTheme bg]; c.selectionStyle=UITableViewCellSelectionStyleNone;
         UIImageView*th=[[UIImageView alloc] initWithFrame:CGRectMake(12,6,48,48)]; th.tag=10; th.backgroundColor=[SpotTheme card]; th.contentMode=UIViewContentModeScaleAspectFill; th.clipsToBounds=YES; [c.contentView addSubview:th];
         UILabel*nm=[[UILabel alloc] initWithFrame:CGRectMake(72,0,tv.bounds.size.width-88,60)]; nm.tag=11; nm.font=[UIFont systemFontOfSize:16]; nm.textColor=[SpotTheme ink]; [c.contentView addSubview:nm]; }
     NSDictionary*p=_lists[ip.row];
@@ -66,6 +68,7 @@
     }];
 }
 - (void)close { [[MMRootController shared] popContent]; }
+- (void)relayoutForSize:(CGSize)size { [_table reloadData]; }
 @end
 
 @interface MMSwipeGate : NSObject <UIGestureRecognizerDelegate>   // nur waagrecht nach rechts starten, sonst scrollt die Liste

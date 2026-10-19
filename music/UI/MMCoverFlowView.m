@@ -127,8 +127,9 @@ static NSDictionary *gLastPlaylist; static CGFloat gLastPlPos=-1;
     UIButton*done=[self pill:L(@"Done") frame:CGRectMake(W-84,8,76,30)]; [done addTarget:self action:@selector(close) forControlEvents:UIControlEventTouchUpInside];
     _back=[self pill:L(@"‹ Playlists") frame:CGRectMake(8,8,96,30)]; [_back addTarget:self action:@selector(backToPlaylists) forControlEvents:UIControlEventTouchUpInside]; _back.hidden=YES;
 
-    [self addGestureRecognizer:[[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(pan:)]];
-    [self addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(tap:)]];
+    // iOS 5: Gesten auf der ganzen Ansicht schlucken sonst die Tipps auf "Fertig"/"Playlists" (iOS 6 lässt Knöpfe vor)
+    UIPanGestureRecognizer*pg=[[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(pan:)]; pg.delegate=(id<UIGestureRecognizerDelegate>)self; [self addGestureRecognizer:pg];
+    UITapGestureRecognizer*tg=[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(tap:)]; tg.delegate=(id<UIGestureRecognizerDelegate>)self; [self addGestureRecognizer:tg];
     [self loadPlaylists];
     return self;
 }
@@ -431,6 +432,7 @@ static void setBaked(CALayer*c,NSArray*b){ ((CALayer*)c.sublayers[0]).contents=(
 
 #pragma mark - Antippen
 
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)g shouldReceiveTouch:(UITouch *)t { return ![t.view isKindOfClass:[UIControl class]]; }
 - (void)tap:(UITapGestureRecognizer *)g {
     if(_revealing) return;
     CGPoint p=[g locationInView:self]; CGFloat W=self.bounds.size.width;

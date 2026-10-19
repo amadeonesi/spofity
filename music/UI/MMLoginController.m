@@ -1,5 +1,6 @@
 #import "MMLoginController.h"
 #import "SpotTheme.h"
+#import "MMLayout.h"
 #import "MMSpotify.h"
 #import "MMRootController.h"
 #import "MMKeySetupController.h"
@@ -19,28 +20,39 @@
     NSUInteger _pairRun;
 }
 
+- (BOOL)shouldAutorotateToInterfaceOrientation:(UIInterfaceOrientation)o { return MMShouldAutorotate(o); }   // iPad: dreht mit
+- (BOOL)shouldAutorotate { return MMIsPad(); }
+MM_IOS6_BEGIN
+- (UIInterfaceOrientationMask)supportedInterfaceOrientations { return (UIInterfaceOrientationMask)MMSupportedOrientations(); }
+MM_IOS6_END
 - (void)loadView {
     self.view=[[UIView alloc] initWithFrame:[UIScreen mainScreen].applicationFrame];   // ohne Statusleiste
     self.view.backgroundColor=[SpotTheme bg];
-    CGFloat W=self.view.bounds.size.width, H=self.view.bounds.size.height;
+    // iPad: alles in einer mittigen Spalte (400 x 640), die beim Drehen mittig bleibt; iPhone: direkt in der Ansicht
+    UIView*host=self.view;
+    if(MMIsPad()){ CGSize b=self.view.bounds.size;
+        host=[[UIView alloc] initWithFrame:CGRectMake(floor((b.width-MMPadColumnW)/2),floor((b.height-640)/2),MMPadColumnW,640)];
+        host.autoresizingMask=UIViewAutoresizingFlexibleLeftMargin|UIViewAutoresizingFlexibleRightMargin|UIViewAutoresizingFlexibleTopMargin|UIViewAutoresizingFlexibleBottomMargin;
+        [self.view addSubview:host]; }
+    CGFloat W=host.bounds.size.width, H=host.bounds.size.height;
 
     UIImageView*logo=[[UIImageView alloc] initWithFrame:CGRectMake(W/2-40,H*0.10,80,80)];
-    logo.image=[SpotTheme logo:80]; [self.view addSubview:logo];
+    logo.image=[SpotTheme logo:80]; [host addSubview:logo];
 
     UILabel*t=[[UILabel alloc] initWithFrame:CGRectMake(20,H*0.10+92,W-40,32)];
-    t.text=@"Spotify"; t.font=[UIFont boldSystemFontOfSize:28]; t.textColor=[SpotTheme ink]; t.textAlignment=NSTextAlignmentCenter; t.backgroundColor=[UIColor clearColor]; [self.view addSubview:t];
+    t.text=@"Spotify"; t.font=[UIFont boldSystemFontOfSize:28]; t.textColor=[SpotTheme ink]; t.textAlignment=NSTextAlignmentCenter; t.backgroundColor=[UIColor clearColor]; [host addSubview:t];
 
     UILabel*sub=[[UILabel alloc] initWithFrame:CGRectMake(20,H*0.10+128,W-40,18)];
-    sub.text=L(@"Log in with your Spotify account"); sub.font=[SpotTheme sub]; sub.textColor=[SpotTheme muted]; sub.textAlignment=NSTextAlignmentCenter; sub.backgroundColor=[UIColor clearColor]; [self.view addSubview:sub];
+    sub.text=L(@"Log in with your Spotify account"); sub.font=[SpotTheme sub]; sub.textColor=[SpotTheme muted]; sub.textAlignment=NSTextAlignmentCenter; sub.backgroundColor=[UIColor clearColor]; [host addSubview:sub];
 
     CGFloat fy=H*0.10+170;
     _status=[[UILabel alloc] initWithFrame:CGRectMake(20,fy+182,W-40,80)];
     _status.font=[SpotTheme sub]; _status.textColor=[SpotTheme muted]; _status.textAlignment=NSTextAlignmentCenter; _status.numberOfLines=0; _status.backgroundColor=[UIColor clearColor];
-    [self.view addSubview:_status];
+    [host addSubview:_status];
 
     // ---- Login mit Code (spotify.com/pair) ----
     _pairBox=[[UIView alloc] initWithFrame:CGRectMake(20,fy-8,W-40,170)];
-    _pairBox.backgroundColor=[UIColor clearColor]; [self.view addSubview:_pairBox];
+    _pairBox.backgroundColor=[UIColor clearColor]; [host addSubview:_pairBox];
     _pairHint=[[UILabel alloc] initWithFrame:CGRectMake(0,0,W-40,40)];
     _pairHint.text=L(@"On your phone or computer open"); _pairHint.numberOfLines=2;
     _pairHint.font=[SpotTheme sub]; _pairHint.textColor=[SpotTheme muted]; _pairHint.textAlignment=NSTextAlignmentCenter; _pairHint.backgroundColor=[UIColor clearColor];
@@ -59,7 +71,7 @@
     _pairBtn.titleLabel.font=[UIFont boldSystemFontOfSize:16];
     [_pairBtn setTitle:L(@"LOG IN WITH PHONE") forState:UIControlStateNormal]; [_pairBtn setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
     [_pairBtn addTarget:self action:@selector(startPairing) forControlEvents:UIControlEventTouchUpInside];
-    [self.view addSubview:_pairBtn];
+    [host addSubview:_pairBtn];
 
     [self showPairing:NO];
     // Wenn gespeicherte Zugangsdaten existieren: erst mal nur Status (kein Geflacker)

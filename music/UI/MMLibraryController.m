@@ -1,5 +1,6 @@
 #import "MMLibraryController.h"
 #import "SpotTheme.h"
+#import "MMLayout.h"
 #import "MMSpotify.h"
 #import "MMTrackListController.h"
 #import "MMRootController.h"
@@ -30,7 +31,7 @@
 }
 
 - (void)loadView {
-    self.view=[[UIView alloc] initWithFrame:[UIScreen mainScreen].bounds];
+    self.view=[[UIView alloc] initWithFrame:MMPageFrame(NO)];
     self.view.backgroundColor=[SpotTheme bg];
     CGFloat W=self.view.bounds.size.width, H=self.view.bounds.size.height;
 
@@ -54,7 +55,7 @@
 
     _table=[[UITableView alloc] initWithFrame:CGRectMake(0,48,W,H-48) style:UITableViewStylePlain];
     _table.backgroundColor=[SpotTheme bg]; _table.separatorColor=[SpotTheme line];
-    _table.dataSource=self; _table.delegate=self; _table.rowHeight=60; _table.contentInset=UIEdgeInsetsMake(0,0,84,0);   // Platz für untere Leisten
+    _table.dataSource=self; _table.delegate=self; _table.rowHeight=60; _table.contentInset=UIEdgeInsetsMake(0,0,MMPageBottomInset(84),0);   // Platz für untere Leisten
     _table.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight; [self.view addSubview:_table];
 
     _hint=[[UILabel alloc] initWithFrame:CGRectMake(20,120,W-40,60)]; _hint.numberOfLines=0; _hint.textColor=[SpotTheme faint]; _hint.font=[SpotTheme sub]; _hint.textAlignment=NSTextAlignmentCenter; [self.view addSubview:_hint];
@@ -71,6 +72,7 @@
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(dlRefresh) name:@"MMDownloadDone" object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(dlRefresh) name:@"MMDownloadsChanged" object:nil];
     for(NSString*n in @[@"MMDownloadProgress",@"MMDownloadFull",@"MMDownloadError"]) [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(drawDlBtn) name:n object:nil];
+    MMAutoMask(self.view);   // iPad: Unteransichten folgen der Breite beim Drehen
 }
 - (void)dlRefresh { [_dlMemo removeAllObjects]; [_table reloadData]; [self updateHasDl]; [self drawDlBtn]; }
 - (void)openDownloads { [[MMRootController shared] pushContent:[[MMDownloadsController alloc] init]]; }   // ✓-Badges nach Download-Ende aktualisieren
@@ -165,11 +167,11 @@
     [MMSpotify apiUserCached:@"me/playlists?limit=50" completion:^(NSDictionary*j,NSInteger st,BOOL fresh){
         NSArray*items=j[@"items"];
         if(![items isKindOfClass:[NSArray class]]){ _hint.text=(st==401)?L(@"Session expired."):L(@"Couldn't load."); _loaded=NO; return; }
-        _playlists=[self parsePlaylists:items]; _hint.hidden=YES;
+        _playlists=[MMLibraryController parsePlaylists:items]; _hint.hidden=YES;
         _nextPath=[j[@"next"] isKindOfClass:[NSString class]]?j[@"next"]:nil; [_table reloadData];
     }];
 }
-- (NSArray *)parsePlaylists:(NSArray *)items {
++ (NSArray *)parsePlaylists:(NSArray *)items {   // auch für die iPad-Seitenleiste
     NSMutableArray*out=[NSMutableArray array];
     for(NSDictionary*p in items){ if([p isKindOfClass:[NSDictionary class]]&&p[@"id"]) [out addObject:@{@"name":p[@"name"]?:L(@"Playlist"),@"id":p[@"id"],@"cover":[MMCovers bestURL:p[@"images"]]?:@""}]; }
     return out;
@@ -184,7 +186,7 @@
         _loadingMore=NO; _table.tableFooterView=nil;
         NSArray*items=[j[@"items"] isKindOfClass:[NSArray class]]?j[@"items"]:nil;
         if(!items || ![p isEqualToString:_nextPath]) return;   // Fehler (beim nächsten Scrollen erneut) oder Liste inzwischen neu geladen
-        NSArray*more=[self parsePlaylists:items]; NSUInteger start=1+_playlists.count+(_hasDl?1:0);   // +1 = Lieblingssongs oben
+        NSArray*more=[MMLibraryController parsePlaylists:items]; NSUInteger start=1+_playlists.count+(_hasDl?1:0);   // +1 = Lieblingssongs oben
         _playlists=[_playlists arrayByAddingObjectsFromArray:more];
         _nextPath=[j[@"next"] isKindOfClass:[NSString class]]?j[@"next"]:nil;
         NSMutableArray*ips=[NSMutableArray array]; for(NSUInteger i=0;i<more.count;i++) [ips addObject:[NSIndexPath indexPathForRow:start+i inSection:0]];
@@ -198,8 +200,8 @@
 - (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s { return (_hasDl?1:0) + 1 + _playlists.count; }  // +1 = gespeicherte Songs
 
 - (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
-    UITableViewCell*c=[tv dequeueReusableCellWithIdentifier:@"r"];
-    if(!c){ c=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"r"];
+    UITableViewCell*c=[tv dequeueReusableCellWithIdentifier:MMCellID(@"r",tv)];
+    if(!c){ c=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:MMCellID(@"r",tv)];
         c.backgroundColor=[SpotTheme bg]; c.selectionStyle=UITableViewCellSelectionStyleNone;
         UIImageView*th=[[UIImageView alloc] initWithFrame:CGRectMake(12,6,48,48)]; th.tag=10; th.contentMode=UIViewContentModeScaleAspectFill; th.clipsToBounds=YES; th.layer.cornerRadius=2; [c.contentView addSubview:th];
         UILabel*nm=[[UILabel alloc] initWithFrame:CGRectMake(72,0,tv.bounds.size.width-72-40,60)]; nm.tag=11; nm.font=[UIFont boldSystemFontOfSize:16]; nm.textColor=[SpotTheme ink]; [c.contentView addSubview:nm];
@@ -242,4 +244,5 @@
 }
 // ---- Einstellungen: eigene Seite ----
 - (void)openSettings { [[MMRootController shared] pushContent:[[MMSettingsController alloc] init]]; }
+- (void)relayoutForSize:(CGSize)size { [_table reloadData]; }   // iPad gedreht: Zellen in neuer Breite
 @end

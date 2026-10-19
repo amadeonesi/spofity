@@ -1,11 +1,12 @@
 #import "MMQueueController.h"
 #import "SpotTheme.h"
+#import "MMLayout.h"
 #import "MMRootController.h"
 #import "MMCovers.h"
 #import "MMSongMenu.h"
 #import "MeshL10n.h"
 
-@interface MMQueueController () <UITableViewDataSource, UITableViewDelegate, UIAlertViewDelegate>
+@interface MMQueueController () <UITableViewDataSource, UITableViewDelegate, UIAlertViewDelegate, UIGestureRecognizerDelegate>
 @end
 
 // Beide Kopf-Symbole auf demselben Raster: 26x26, Zeichen in einem 20x14-Feld mittig (Mitte y=11), Punkt (an) bei y=21.
@@ -55,7 +56,11 @@ static UIImage* gripIcon(void){
 @implementation MMQueueController {
     UITableView *_table;
     NSArray *_queue, *_user; NSInteger _idx;   // Liste + Position, eingereihte Titel
+    UITapGestureRecognizer *_outsideTap;       // iPad-Fenster: Tippen daneben schließt
 }
+// iPad: begrenzt breit und mittig von unten (Formular-Blatt), auch über dem großen Player
+- (id)init { if((self=[super init]) && MMIsPad()) self.modalPresentationStyle=UIModalPresentationFormSheet; return self; }
+- (BOOL)shouldAutorotateToInterfaceOrientation:(UIInterfaceOrientation)o { return MMShouldAutorotate(o); }
 - (void)loadView {
     self.view=[[UIView alloc] initWithFrame:[UIScreen mainScreen].applicationFrame];
     self.view.backgroundColor=[SpotTheme bg];
@@ -76,6 +81,7 @@ static UIImage* gripIcon(void){
         if(commit) [s removeAt:ip]; return YES; }
         trackAt:^NSDictionary*(NSIndexPath*ip){ MMQueueController*s=ws; return s?[s trackAt:ip]:nil; }];
     [self reload];
+    MMAutoMask(self.view);   // iPad: als Formular-Blatt (540 pt) eingeblendet -> Unteransichten passen sich an
 }
 - (void)reload { MMRootController*r=[MMRootController shared]; _queue=r.queue; _idx=r.queueIndex; _user=r.userQueue; [_table reloadData]; }
 - (void)viewWillAppear:(BOOL)a { [super viewWillAppear:a]; [self reload]; }
@@ -115,8 +121,8 @@ static UIImage* gripIcon(void){
 }
 - (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
     CGFloat W=tv.bounds.size.width;
-    UITableViewCell*c=[tv dequeueReusableCellWithIdentifier:@"r"];
-    if(!c){ c=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"r"]; c.backgroundColor=[SpotTheme bg]; c.selectionStyle=UITableViewCellSelectionStyleNone;
+    UITableViewCell*c=[tv dequeueReusableCellWithIdentifier:MMCellID(@"r",tv)];
+    if(!c){ c=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:MMCellID(@"r",tv)]; c.backgroundColor=[SpotTheme bg]; c.selectionStyle=UITableViewCellSelectionStyleNone;
         UIImageView*cov=[[UIImageView alloc] initWithFrame:CGRectMake(16,7,38,38)]; cov.tag=1; cov.backgroundColor=[SpotTheme card]; cov.layer.cornerRadius=4; cov.clipsToBounds=YES; cov.contentMode=UIViewContentModeScaleAspectFill; [c.contentView addSubview:cov];
         UILabel*ti=[[UILabel alloc] initWithFrame:CGRectMake(66,8,W-82,19)]; ti.tag=2; ti.font=[UIFont boldSystemFontOfSize:15]; ti.autoresizingMask=UIViewAutoresizingFlexibleWidth; [c.contentView addSubview:ti];
         UILabel*ar=[[UILabel alloc] initWithFrame:CGRectMake(66,27,W-82,17)]; ar.tag=3; ar.font=[SpotTheme sub]; ar.textColor=[SpotTheme muted]; ar.autoresizingMask=UIViewAutoresizingFlexibleWidth; [c.contentView addSubview:ar]; }
@@ -130,9 +136,13 @@ static UIImage* gripIcon(void){
 - (UITableViewCellEditingStyle)tableView:(UITableView *)tv editingStyleForRowAtIndexPath:(NSIndexPath *)ip { return UITableViewCellEditingStyleNone; }
 // Den System-Ziehgriff (iOS 6: UITableViewCellReorderControl mit einem Bild) gegen den schlanken tauschen
 - (void)tableView:(UITableView *)tv willDisplayCell:(UITableViewCell *)c forRowAtIndexPath:(NSIndexPath *)ip {
-    for(UIView*v in c.subviews) if([NSStringFromClass([v class]) rangeOfString:@"Reorder"].location!=NSNotFound)
+    CGFloat right=MIN(c.contentView.bounds.size.width,c.bounds.size.width);   // Titel/Artist enden vor dem Ziehgriff (sonst laufen lange Titel darunter)
+    for(UIView*v in c.subviews) if([NSStringFromClass([v class]) rangeOfString:@"Reorder"].location!=NSNotFound){
+        right=MIN(right,v.frame.origin.x);
         for(UIView*iv in v.subviews) if([iv isKindOfClass:[UIImageView class]]){ UIImageView*im=(UIImageView*)iv;
-            im.image=gripIcon(); im.contentMode=UIViewContentModeCenter; im.frame=v.bounds; }
+            im.image=gripIcon(); im.contentMode=UIViewContentModeCenter; im.frame=v.bounds; } }
+    if(tv.editing && [self tableView:tv canMoveRowAtIndexPath:ip]) right=MIN(right,c.bounds.size.width-44);   // Griff ist noch nicht angelegt
+    for(NSInteger tag=2;tag<=3;tag++){ UIView*l=[c.contentView viewWithTag:tag]; if(l && right-66-8>40){ l.autoresizingMask=UIViewAutoresizingNone; CGRect f=l.frame; f.size.width=right-66-8; l.frame=f; } }
 }
 - (BOOL)tableView:(UITableView *)tv shouldIndentWhileEditingRowAtIndexPath:(NSIndexPath *)ip { return NO; }
 - (BOOL)tableView:(UITableView *)tv canMoveRowAtIndexPath:(NSIndexPath *)ip { return ip.section>0; }
@@ -167,5 +177,15 @@ static UIImage* gripIcon(void){
     [_table deleteRowsAtIndexPaths:@[ip] withRowAnimation:UITableViewRowAnimationLeft];
     if(ip.section==1 && !_user.count) [_table reloadSections:[NSIndexSet indexSetWithIndex:1] withRowAnimation:UITableViewRowAnimationNone];   // Überschrift ausblenden
 }
-- (void)close { [self dismissViewControllerAnimated:YES completion:nil]; }
+- (void)close { if(self.onClose) self.onClose(); else [self dismissViewControllerAnimated:YES completion:nil]; }
+// iPad (Fenster in der Mitte): irgendwo daneben tippen schließt die Warteschlange
+- (void)viewDidAppear:(BOOL)a {
+    [super viewDidAppear:a];
+    if(MMIsPad() && self.presentingViewController && !self.parentViewController && !_outsideTap){   // nur als eigenes Fenster, nicht eingebettet
+        _outsideTap=[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(outsideTap:)];
+        _outsideTap.cancelsTouchesInView=NO; _outsideTap.delegate=self; [self.view.window addGestureRecognizer:_outsideTap]; }
+}
+- (void)viewWillDisappear:(BOOL)a { [super viewWillDisappear:a]; [_outsideTap.view removeGestureRecognizer:_outsideTap]; _outsideTap=nil; }
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)g shouldReceiveTouch:(UITouch *)t { return g!=_outsideTap || ![t.view isDescendantOfView:self.view]; }
+- (void)outsideTap:(UITapGestureRecognizer *)g { if(g.state==UIGestureRecognizerStateEnded) [self close]; }
 @end

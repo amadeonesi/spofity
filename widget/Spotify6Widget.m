@@ -116,10 +116,12 @@ static UIImage* glyph(NSString*kind){
 
 - (void)loadView {
     _view=[[UIView alloc] initWithFrame:CGRectMake(2,0,W,H)];
+    // Breite folgt dem Mitteilungszentrum (iPad und quer breiter als 316 pt): Text wächst mit, Knöpfe bleiben rechts
+    _view.autoresizingMask=UIViewAutoresizingFlexibleWidth;
     // Hintergrund wie das Wetter-Widget: Apples eigenes Bild aus dem System (nicht kopiert), seitlich gestreckt
     UIImage*bg=[UIImage imageWithContentsOfFile:@"/System/Library/WeeAppPlugins/WeatherNotifications.bundle/weeapp_bg.png"]
             ?:[UIImage imageWithContentsOfFile:@"/System/Library/WeeAppPlugins/StocksWeeApp.bundle/WeeAppBackground.png"];
-    _bg=[[UIImageView alloc] initWithFrame:_view.bounds]; _bg.image=[bg stretchableImageWithLeftCapWidth:4 topCapHeight:0]; [_view addSubview:_bg];
+    _bg=[[UIImageView alloc] initWithFrame:_view.bounds]; _bg.image=[bg stretchableImageWithLeftCapWidth:4 topCapHeight:0]; _bg.autoresizingMask=UIViewAutoresizingFlexibleWidth; [_view addSubview:_bg];
     if(!bg){ _bg.backgroundColor=[UIColor colorWithWhite:0 alpha:0.4]; _bg.layer.cornerRadius=6; }   // Notfall, falls das Systembild fehlt
     CGFloat cs=52, cy=(H-4-cs)/2;   // unten liegen ~4 pt Schatten im Bild
     _cover=[[UIImageView alloc] initWithFrame:CGRectMake(8,cy,cs,cs)]; _cover.backgroundColor=[UIColor colorWithWhite:0.2 alpha:1];
@@ -129,15 +131,29 @@ static UIImage* glyph(NSString*kind){
     _artist=[[S6Marquee alloc] initWithFrame:CGRectMake(tx,0,tw,16)]; _artist.label.font=[UIFont systemFontOfSize:12]; _artist.label.textColor=[UIColor colorWithWhite:0.88 alpha:1];
     _from=[[UILabel alloc] initWithFrame:CGRectMake(tx,0,tw,15)]; _from.font=[UIFont systemFontOfSize:11]; _from.textColor=[UIColor colorWithWhite:0.7 alpha:1];
     _from.backgroundColor=[UIColor clearColor]; _from.shadowColor=[UIColor colorWithWhite:0 alpha:0.6]; _from.shadowOffset=CGSizeMake(0,1);
-    [_view addSubview:_title]; [_view addSubview:_artist]; [_view addSubview:_from];
+    for(UIView*v in @[_title,_artist,_from]){ v.autoresizingMask=UIViewAutoresizingFlexibleWidth; [_view addSubview:v]; }
     CGFloat bx=W-108;
     _prev=[self button:@"prev" x:bx action:@selector(prevTap)]; _play=[self button:@"play" x:bx+34 action:@selector(playTap)]; _next=[self button:@"next" x:bx+68 action:@selector(nextTap)];
     [self refresh];
 }
 - (UIButton *)button:(NSString *)kind x:(CGFloat)x action:(SEL)a {
     UIButton*b=[UIButton buttonWithType:UIButtonTypeCustom]; b.frame=CGRectMake(x,(H-4-40)/2,34,40); b.showsTouchWhenHighlighted=YES;
-    [b setImage:glyph(kind) forState:UIControlStateNormal]; [b addTarget:self action:a forControlEvents:UIControlEventTouchUpInside]; [_view addSubview:b];
+    [b setImage:glyph(kind) forState:UIControlStateNormal]; [b addTarget:self action:a forControlEvents:UIControlEventTouchUpInside];
+    b.autoresizingMask=UIViewAutoresizingFlexibleLeftMargin; [_view addSubview:b];
+    [b addTarget:self action:@selector(keepTouch:) forControlEvents:UIControlEventTouchDown];
     return b;
+}
+// iOS 5: die Widget-Zelle (SBWeeAppCell) hat einen eigenen Tipp-Erkenner (fürs Öffnen per launchURLForTapLocation:).
+// Erkennt er den Tipp, bricht er die Berührung im Knopf ab (cancelsTouchesInView) und TouchUpInside kommt nie an.
+// Bei kurzen Tipps kommt die Berührung wegen delaysContentTouches der Liste erst beim Loslassen an, also schon beim
+// Erscheinen abschalten (viewDidAppear); keepTouch: beim Drücken bleibt als Rückfall.
+// Nur bei der eigenen Zelle: der Zellen-Tipp läuft weiter, der Knopf bekommt sein Loslassen.
+- (void)keepTouch:(UIView *)b {
+    for(UIView*s=b.superview; s; s=s.superview){
+        if(![s isKindOfClass:[UITableViewCell class]]) continue;
+        for(UIGestureRecognizer*g in s.gestureRecognizers) if([g isKindOfClass:[UITapGestureRecognizer class]]) g.cancelsTouchesInView=NO;
+        break;
+    }
 }
 // Titel + Artist (+ "Playing from …") als Block senkrecht mittig neben dem Cover
 - (void)layoutText {
@@ -164,7 +180,8 @@ static UIImage* glyph(NSString*kind){
 }
 - (BOOL)visible {
     if(![self spotifyPlaying]) return NO;
-    id v=[self appPrefs][@"ncWidget"]; return v?[v boolValue]:YES;
+    // objectForKey: statt [] (auch unten in refresh): Subscripting gibt es in SpringBoard auf iOS 5 nicht
+    id v=[[self appPrefs] objectForKey:@"ncWidget"]; return v?[v boolValue]:YES;
 }
 
 - (void)refresh {
@@ -172,11 +189,11 @@ static UIImage* glyph(NSString*kind){
     BOOL vis=[self visible]; _view.hidden=!vis; wlog(@"refresh visible=%d",vis); if(!vis) return;
     id mc=MC();
     [_title setText:call(mc,@"nowPlayingTitle")?:@""]; [_artist setText:call(mc,@"nowPlayingArtist")?:@""];
-    NSString*ctx=[self appPrefs][@"spContext"];   // von Spotify6 gespeichert (Playlist, Album, Artist, Lieblingssongs)
+    NSString*ctx=[[self appPrefs] objectForKey:@"spContext"];   // von Spotify6 gespeichert (Playlist, Album, Artist, Lieblingssongs)
     _from.text=([ctx isKindOfClass:[NSString class]] && [ctx length])?[@"Playing from " stringByAppendingString:ctx]:@"";
     [self layoutText];
     id art=call(mc,@"artworkData");
-    if(![art isKindOfClass:[NSData class]]){ NSDictionary*info=nil; @try{ info=[mc valueForKey:@"_nowPlayingInfo"]; }@catch(NSException*e){} art=info[@"artworkData"]; }
+    if(![art isKindOfClass:[NSData class]]){ NSDictionary*info=nil; @try{ info=[mc valueForKey:@"_nowPlayingInfo"]; }@catch(NSException*e){} art=[info objectForKey:@"artworkData"]; }
     if([art isKindOfClass:[NSData class]] && ![art isEqualToData:_artData]){ _artData=art; _cover.image=[UIImage imageWithData:art]; }
     BOOL playing=[mc respondsToSelector:@selector(isPlaying)] && ((BOOL(*)(id,SEL))objc_msgSend)(mc,@selector(isPlaying));
     [_play setImage:glyph(playing?@"pause":@"play") forState:UIControlStateNormal];
@@ -194,7 +211,7 @@ static UIImage* glyph(NSString*kind){
 - (void)loadFullView { if(!_view) [self loadView]; [self refresh]; }
 - (float)viewHeight { return [self visible]?H:0; }
 - (void)viewWillAppear { [self refresh]; }
-- (void)viewDidAppear { _shown=YES; [_title startAfter:1.5]; [_artist startAfter:1.5]; }   // Lauftext 1,5 s nach dem Aufziehen
+- (void)viewDidAppear { _shown=YES; [self keepTouch:_play]; [_title startAfter:1.5]; [_artist startAfter:1.5]; }   // Lauftext 1,5 s nach dem Aufziehen
 - (void)viewWillDisappear { _shown=NO; [_title stop]; [_artist stop]; }
 - (void)viewDidDisappear { _shown=NO; [_title stop]; [_artist stop]; }
 @end

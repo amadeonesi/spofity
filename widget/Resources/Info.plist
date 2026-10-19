@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
 	<key>CFBundleName</key><string>Spotify6Widget</string>
-	<key>CFBundleDisplayName</key><string>Spotify6</string>
+	<key>CFBundleDisplayName</key><string>Spotify6 Widget</string>
 	<key>CFBundleIdentifier</key><string>io.github.ikiwy.spotify6widget</string>
 	<key>CFBundleExecutable</key><string>Spotify6Widget</string>
 	<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>

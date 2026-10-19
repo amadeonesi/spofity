@@ -5,7 +5,7 @@
 #define MMHistoryChanged @"MMHistoryChanged"   // Notification nach jeder neuen Wiedergabe
 
 @interface MMHistory : NSObject
-+ (void)recordTrack:(NSDictionary *)track;      // {id,title,artist,cover,albumId,album}
++ (void)recordTrack:(NSDictionary *)track;      // {id,title,artist,cover,albumId,album,artistId}
 + (void)recordContext:(NSDictionary *)context;  // {type: playlist|album|artist|liked, id, name, images}
 + (NSArray *)tracks;                            // neueste zuerst, jedes mit "at" (ms seit 1970)
 + (NSArray *)contexts;
