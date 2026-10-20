@@ -1,4 +1,5 @@
 #import "MMLoginController.h"
+#import "MMDiagnosticsController.h"
 #import "SpotTheme.h"
 #import "MMLayout.h"
 #import "MMSpotify.h"
@@ -15,7 +16,7 @@
     // Login mit Code über ein anderes Gerät
     UIView *_pairBox;
     UILabel *_pairHint, *_pairCode, *_pairURL;
-    UIButton *_pairBtn;
+    UIButton *_pairBtn, *_diagBtn;
     BOOL _pairCancelled;
     NSUInteger _pairRun;
 }
@@ -49,6 +50,11 @@ MM_IOS6_END
     _status=[[UILabel alloc] initWithFrame:CGRectMake(20,fy+182,W-40,80)];
     _status.font=[SpotTheme sub]; _status.textColor=[SpotTheme muted]; _status.textAlignment=NSTextAlignmentCenter; _status.numberOfLines=0; _status.backgroundColor=[UIColor clearColor];
     [host addSubview:_status];
+    // Klemmt die Anmeldung, kommt man sonst nirgends an die Fehlerinfos (die liegen in den Einstellungen)
+    _diagBtn=[UIButton buttonWithType:UIButtonTypeCustom]; _diagBtn.frame=CGRectMake(W/2-80,fy+262,160,32);
+    [_diagBtn setTitle:L(@"Debug info") forState:UIControlStateNormal]; [_diagBtn setTitleColor:[SpotTheme muted] forState:UIControlStateNormal];
+    _diagBtn.titleLabel.font=[UIFont systemFontOfSize:13]; _diagBtn.hidden=YES;
+    [_diagBtn addTarget:self action:@selector(openDiag) forControlEvents:UIControlEventTouchUpInside]; [host addSubview:_diagBtn];
 
     // ---- Login mit Code (spotify.com/pair) ----
     _pairBox=[[UIView alloc] initWithFrame:CGRectMake(20,fy-8,W-40,170)];
@@ -78,7 +84,8 @@ MM_IOS6_END
     if([MMSpotify hasStoredCreds]) _status.text=L(@"Connecting …");
 }
 
-- (void)showPairing:(BOOL)show { _pairBox.hidden=!show; _pairBtn.hidden=YES; }
+- (void)showPairing:(BOOL)show { _pairBox.hidden=!show; _pairBtn.hidden=YES; _diagBtn.hidden=YES; }
+- (void)openDiag { [self presentViewController:[[MMDiagnosticsController alloc] init] animated:YES completion:nil]; }
 
 - (void)viewWillDisappear:(BOOL)animated { [super viewWillDisappear:animated]; _pairCancelled=YES; }
 
@@ -88,7 +95,10 @@ MM_IOS6_END
     [self showPairing:YES]; _pairCode.text=@"…"; _status.text=L(@"Requesting code from Spotify …");
     [MMSpotify deviceLoginStart:^(NSDictionary*info,NSString*err){
         if(run!=_pairRun) return;
-        if(!info){ [self showPairing:NO]; _pairBtn.hidden=NO; [_pairBtn setTitle:L(@"TRY AGAIN") forState:UIControlStateNormal];
+#ifdef DEBUG
+        if([[NSFileManager defaultManager] fileExistsAtPath:MMPath(@".pairfail")]){ info=nil; err=@"test failure (.pairfail)"; }   // Test: Fehleranzeige mit "Debug info"
+#endif
+        if(!info){ [self showPairing:NO]; _pairBtn.hidden=NO; _diagBtn.hidden=NO; [_pairBtn setTitle:L(@"TRY AGAIN") forState:UIControlStateNormal];
                    _status.text=[NSString stringWithFormat:@"❌ %@",err?:L(@"Login failed")]; return; }
         _pairCode.text=info[@"user_code"];
         _status.text=L(@"Waiting for confirmation …");
@@ -98,12 +108,12 @@ MM_IOS6_END
                         completion:^(NSString*token,NSString*perr){
             [UIApplication sharedApplication].idleTimerDisabled=NO;
             MMLoginController*s=ws; if(!s||run!=s->_pairRun||s->_pairCancelled) return;
-            if(!token){ [s showPairing:NO]; s->_pairBtn.hidden=NO; [s->_pairBtn setTitle:L(@"NEW CODE") forState:UIControlStateNormal];
+            if(!token){ [s showPairing:NO]; s->_pairBtn.hidden=NO; s->_diagBtn.hidden=NO; [s->_pairBtn setTitle:L(@"NEW CODE") forState:UIControlStateNormal];
                         s->_status.text=[NSString stringWithFormat:@"❌ %@",perr?:L(@"Login failed")]; return; }
             s->_status.text=L(@"Confirmed – logging in …");
             [MMSpotify loginWithToken:token completion:^(BOOL ok,NSString*u,NSString*e){
                 if(ok){ s->_status.text=LF(@"✅ %@, remembered permanently",u); [s enterApp]; }
-                else { [s showPairing:NO]; s->_pairBtn.hidden=NO; [s->_pairBtn setTitle:L(@"TRY AGAIN") forState:UIControlStateNormal];
+                else { [s showPairing:NO]; s->_pairBtn.hidden=NO; s->_diagBtn.hidden=NO; [s->_pairBtn setTitle:L(@"TRY AGAIN") forState:UIControlStateNormal];
                        s->_status.text=[NSString stringWithFormat:@"❌ %@",e?:L(@"Login failed")]; }
             }];
         }];

@@ -131,7 +131,7 @@ MM_IOS6_END
 - (void)viewWillLayoutSubviews { [super viewWillLayoutSubviews]; if(MMIsPad()) [self layoutPad]; }   // auch nach dem Drehen
 // Unter dem Vollbild-Player gedreht: beim Zurückkommen gibt es nicht immer einen eigenen Layout-Durchgang -> selbst neu anordnen
 - (void)viewWillAppear:(BOOL)a { [super viewWillAppear:a]; if(MMIsPad()) [self layoutPad]; }
-- (void)viewDidAppear:(BOOL)a { [super viewDidAppear:a]; if(MMIsPad()) [self layoutPad]; }
+- (void)viewDidAppear:(BOOL)a { [super viewDidAppear:a]; if(MMIsPad()) [self layoutPad]; if(!_pushedStack.count) [self tabShown]; }   // auch nach dem Vollbild-Player
 - (void)padBarRefresh {
     [_queueDock reload];
     [_padBar showTitle:_curTitle artist:_curArtist coverURL:_curCover];
@@ -345,7 +345,7 @@ MM_IOS6_END
     [self popContentImmediate];   // offene Playlist schließen beim Tab-Wechsel
     [[_vcs[_sel] view] removeFromSuperview];
     _sel=idx;
-    UIViewController*vc=_vcs[idx]; [self fitPage:vc]; [_content addSubview:vc.view];
+    UIViewController*vc=_vcs[idx]; [self fitPage:vc]; [_content addSubview:vc.view]; [self tabShown];
     [_sidebar setSelectedKey:_tabs[idx]];
     for(NSUInteger i=0;i<_tabBtns.count;i++){ UIButton*b=_tabBtns[i]; UIColor*c=((NSInteger)i==idx)?[SpotTheme ink]:[SpotTheme faint];
         ((UIImageView*)[b viewWithTag:99]).image=MMTabIcon(_tabs[i],c,24);
@@ -439,8 +439,11 @@ MM_IOS6_END
     UIViewController*vc=[_pushedStack lastObject]; if(!vc)return; [_pushedStack removeLastObject];
     if(!_pushedStack.count) [_sidebar setSelectedKey:_tabs[_sel]];
     [UIView animateWithDuration:0.25 animations:^{ vc.view.frame=CGRectOffset(vc.view.frame,vc.view.frame.size.width,0); }
-                     completion:^(BOOL x){ [vc.view removeFromSuperview]; }];
+                     completion:^(BOOL x){ [vc.view removeFromSuperview]; if(!_pushedStack.count) [self tabShown]; }];
 }
+- (BOOL)hasPushedContent { return _pushedStack.count>0; }
+// Tab-Seite wieder sichtbar: die Startseite zeichnet nur sichtbar neu und holt verdeckte Änderungen hier nach
+- (void)tabShown { UIViewController*vc=_vcs[_sel]; if([vc isKindOfClass:[MMStartController class]]) [(MMStartController*)vc pageDidShow]; }
 - (void)popContentImmediate { for(UIViewController*vc in _pushedStack) [vc.view removeFromSuperview]; [_pushedStack removeAllObjects]; }
 
 // ---- globale Offline-Download-Leiste ----
@@ -476,7 +479,10 @@ MM_IOS6_END
 - (void)hideDownloadBar { _dlBar.hidden=YES; _dlCompact=NO; }
 - (CGFloat)bottomBarsHeight { return (MMIsPad()||_npBar.hidden?0:_npH) + (_dlBar.hidden?0:_dlBar.frame.size.height); }   // iPad: Player-Leiste liegt nicht über dem Inhalt
 - (void)dlProgress:(NSNotification *)n { NSInteger t=[n.userInfo[@"total"] integerValue]; if(t>0) [self showDownloadProgress:[n.userInfo[@"done"] integerValue] total:t]; }
-- (void)dlDone:(NSNotification *)n { [self showDownloadMessage:LF(@"✓  %ld tracks saved offline",(long)[n.userInfo[@"ok"] integerValue])]; }
+- (void)dlDone:(NSNotification *)n {
+    long ok=(long)[n.userInfo[@"ok"] integerValue], una=(long)[n.userInfo[@"unavailable"] integerValue];
+    [self showDownloadMessage:una>0?LF(@"✓  %ld saved offline · %ld not on Spotify",ok,una):LF(@"✓  %ld tracks saved offline",ok)];
+}
 - (void)dlFull:(NSNotification *)n { [self showDownloadMessage:L(@"Storage full, download stopped")]; }
 - (void)dlError:(NSNotification *)n { [self showDownloadMessage:L(@"Connection error, download stopped. Please restart")]; }
 

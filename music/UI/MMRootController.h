@@ -49,6 +49,7 @@
 - (CGRect)contentBounds;      // Größe des Inhaltsbereichs (iPad: rechts neben der Seitenleiste, über der Player-Leiste)
 - (CGFloat)bottomBarsHeight;   // Höhe der gerade sichtbaren Leisten über der Tab-Leiste (Now-Playing + Download)
 - (void)popContent;
+- (BOOL)hasPushedContent;   // liegt eine Seite (Playlist, Album …) über dem Tab
 // globale Offline-Download-Leiste (immer sichtbar wenn aktiv)
 - (void)showDownloadProgress:(NSInteger)done total:(NSInteger)total;
 - (void)showDownloadMessage:(NSString *)msg;

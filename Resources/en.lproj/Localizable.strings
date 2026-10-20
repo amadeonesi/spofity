@@ -4,6 +4,7 @@
 "Search" = "Search";
 "Library" = "Library";
 "✓  %ld tracks saved offline" = "✓  %ld tracks saved offline";
+"✓  %ld saved offline · %ld not on Spotify" = "✓  %ld saved offline · %ld not on Spotify";
 "Storage full, download stopped" = "Storage full, download stopped";
 "Connection error, download stopped. Please restart" = "Connection error, download stopped. Please restart";
 "Liked Songs" = "Liked Songs";

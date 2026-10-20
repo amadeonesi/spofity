@@ -8,7 +8,7 @@
 
 @implementation MMDiagnosticsController {
     UITextView *_text;
-    UIButton *_testBtn;
+    UIButton *_testBtn, *_copyBtn;
     NSMutableArray *_test;   // Zeilen des Verbindungstests (nil = noch nicht gelaufen)
 }
 
@@ -21,7 +21,7 @@
     [back addTarget:self action:@selector(close) forControlEvents:UIControlEventTouchUpInside]; [self.view addSubview:back];
     UILabel*nav=[[UILabel alloc] initWithFrame:CGRectMake(90,8,W-180,34)]; nav.text=L(@"Debug info"); nav.font=[UIFont boldSystemFontOfSize:16];
     nav.textColor=[SpotTheme ink]; nav.textAlignment=NSTextAlignmentCenter; nav.backgroundColor=[UIColor clearColor]; [self.view addSubview:nav];
-    UIButton*copy=[UIButton buttonWithType:UIButtonTypeCustom]; copy.frame=CGRectMake(W-72,8,64,34);
+    UIButton*copy=[UIButton buttonWithType:UIButtonTypeCustom]; copy.frame=CGRectMake(W-72,8,64,34); _copyBtn=copy;
     [copy setTitle:L(@"Copy") forState:UIControlStateNormal]; [copy setTitleColor:[SpotTheme green] forState:UIControlStateNormal];
     copy.titleLabel.font=[UIFont boldSystemFontOfSize:15]; [copy addTarget:self action:@selector(copyText) forControlEvents:UIControlEventTouchUpInside]; [self.view addSubview:copy];
 
@@ -42,7 +42,9 @@
     NSDictionary*info=[[NSBundle mainBundle] infoDictionary];
     NSDateFormatter*df=[[NSDateFormatter alloc] init]; df.dateFormat=@"yyyy-MM-dd HH:mm";
     NSMutableString*r=[NSMutableString string];
-    [r appendFormat:@"Spotify6 %@ · %@ · iOS %@\n",info[@"CFBundleShortVersionString"]?:@"?",[MMSpotify deviceModel],[UIDevice currentDevice].systemVersion];
+    // Cydia-Paket (z.B. 1.2.1-1): schreibt ipainstall bei der Installation in den App-Ordner; fehlt bei Installation per USB
+    NSString*pkg=[[NSString stringWithContentsOfFile:MMPath(@"package-version") encoding:NSUTF8StringEncoding error:NULL] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+    [r appendFormat:@"Spotify6 %@%@ · %@ · iOS %@\n",info[@"CFBundleShortVersionString"]?:@"?",pkg.length?[NSString stringWithFormat:@" (package %@)",pkg]:@"",[MMSpotify deviceModel],[UIDevice currentDevice].systemVersion];
     [r appendFormat:@"Account: %@ · Country: %@\n",[MMSpotify productType]?:@"unknown",[MMSpotify country]?:@"?"];
     [r appendFormat:@"Song keys: %@\n",[MMSpotify keyStatus]];
     [r appendFormat:@"Network: %@ · Free: %@\n",[MMSpotify networkReachable]?@"online":@"offline",[MMTrackListController fmtBytes:[MMSpotify freeDiskBytes]]];
@@ -62,7 +64,10 @@
 }
 - (void)copyText {
     [UIPasteboard generalPasteboard].string=_text.text;
-    [[MMRootController shared] showDownloadMessage:L(@"Copied")];
+    if(!self.presentingViewController){ [[MMRootController shared] showDownloadMessage:L(@"Copied")]; return; }
+    [_copyBtn setTitle:@"✓" forState:UIControlStateNormal];   // vom Login-Bildschirm aus gibt es die Meldeleiste noch nicht
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(1.5*NSEC_PER_SEC)),dispatch_get_main_queue(),^{ [_copyBtn setTitle:L(@"Copy") forState:UIControlStateNormal]; });
 }
-- (void)close { [[MMRootController shared] popContent]; }
+// Vom Login-Bildschirm wird die Seite als Vollbild gezeigt (noch keine App-Oberfläche), sonst als Seite im Inhaltsbereich
+- (void)close { if(self.presentingViewController) [self dismissViewControllerAnimated:YES completion:nil]; else [[MMRootController shared] popContent]; }
 @end
