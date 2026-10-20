@@ -1,4 +1,4 @@
-/* Spotify6 - English UI strings (keys = the English text used in the code) */
+/* Spofity - English UI strings (keys = the English text used in the code) */
 "Home" = "Home";
 "Browse" = "Browse";
 "Search" = "Search";
@@ -61,7 +61,7 @@
 "Spotify only allows search with your own free developer key. You set it up once, takes about 3 minutes – best on your phone or computer." = "Spotify only allows search with your own free developer key. You set it up once, takes about 3 minutes – best on your phone or computer.";
 "Open this page and log in with your Spotify account:" = "Open this page and log in with your Spotify account:";
 "First time only: accept the terms and confirm your email address if asked." = "First time only: accept the terms and confirm your email address if asked.";
-"Tap \"Create app\". Enter any name and description, e.g. \"Spotify6\"." = "Tap \"Create app\". Enter any name and description, e.g. \"Spotify6\".";
+"Tap \"Create app\". Enter any name and description, e.g. \"Spofity\"." = "Tap \"Create app\". Enter any name and description, e.g. \"Spofity\".";
 "For \"Redirect URIs\" enter exactly this and tap \"Add\":" = "For \"Redirect URIs\" enter exactly this and tap \"Add\":";
 "Under \"Which API/SDKs\" tick \"Web API\", accept the terms and tap \"Save\"." = "Under \"Which API/SDKs\" tick \"Web API\", accept the terms and tap \"Save\".";
 "Open \"Settings\" of your new app. Copy the \"Client ID\" and tap \"View client secret\" for the secret." = "Open \"Settings\" of your new app. Copy the \"Client ID\" and tap \"View client secret\" for the secret.";
@@ -98,7 +98,7 @@
 "Log out" = "Log out";
 "Log out?" = "Log out?";
 "Log out and delete data" = "Log out and delete data";
-"Removes your Spotify login, all downloads, playlists and settings from this iPhone. Spotify6 closes afterwards." = "Removes your Spotify login, all downloads, playlists and settings from this iPhone. Spotify6 closes afterwards.";
+"Removes your Spotify login, all downloads, playlists and settings from this iPhone. Spofity closes afterwards." = "Removes your Spotify login, all downloads, playlists and settings from this iPhone. Spofity closes afterwards.";
 "Logging out …" = "Logging out …";
 "Logged out" = "Logged out";
 "Save offline?" = "Save offline?";
@@ -173,7 +173,7 @@
 "Downloaded songs" = "Downloaded songs";
 "%lu · %@" = "%lu · %@";
 "In use" = "In use";
-"Background download keeps saving offline songs while Spotify6 is in the background." = "Background download keeps saving offline songs while Spotify6 is in the background.";
+"Background download keeps saving offline songs while Spofity is in the background." = "Background download keeps saving offline songs while Spofity is in the background.";
 "Browse uses search, which needs your own free Spotify developer key." = "Browse uses search, which needs your own free Spotify developer key.";
 "Set up" = "Set up";
 "Downloaded" = "Downloaded";
@@ -181,7 +181,7 @@
 "Can't reach Spotify" = "Can't reach Spotify";
 "This network seems to block Spotify's ports (4070, 443 and 80), so songs can't load. Library and search still work. Try another Wi-Fi or mobile data." = "This network seems to block Spotify's ports (4070, 443 and 80), so songs can't load. Library and search still work. Try another Wi-Fi or mobile data.";
 "Spotify Premium needed" = "Spotify Premium needed";
-"Your Spotify account is \"%@\", not Premium. Spotify only lets Premium accounts play songs in other apps like Spotify6." = "Your Spotify account is \"%@\", not Premium. Spotify only lets Premium accounts play songs in other apps like Spotify6.";
+"Your Spotify account is \"%@\", not Premium. Spotify only lets Premium accounts play songs in other apps like Spofity." = "Your Spotify account is \"%@\", not Premium. Spotify only lets Premium accounts play songs in other apps like Spofity.";
 "Couldn't play this song" = "Couldn't play this song";
 "Spotify didn't send the song key" = "Spotify didn't send the song key";
 "Couldn't reach Spotify" = "Couldn't reach Spotify";
@@ -197,7 +197,7 @@
 "Run connection test" = "Run connection test";
 "running … (up to about a minute)" = "running … (up to about a minute)";
 "Your Spotify account is too new" = "Your Spotify account is too new";
-"Spotify doesn't give song keys to new accounts in older apps like Spotify6, so songs can't play or download. Library and search still work.\n\nSpotify blocks this on their side, so Spotify6 can't fix it. To play music, log in with an older Premium account (Settings, Log out). If your account isn't new, try again later." = "Spotify doesn't give song keys to new accounts in older apps like Spotify6, so songs can't play or download. Library and search still work.\n\nSpotify blocks this on their side, so Spotify6 can't fix it. To play music, log in with an older Premium account (Settings, Log out). If your account isn't new, try again later.";
+"Spotify doesn't give song keys to new accounts in older apps like Spofity, so songs can't play or download. Library and search still work.\n\nSpotify blocks this on their side, so Spofity can't fix it. To play music, log in with an older Premium account (Settings, Log out). If your account isn't new, try again later." = "Spotify doesn't give song keys to new accounts in older apps like Spofity, so songs can't play or download. Library and search still work.\n\nSpotify blocks this on their side, so Spofity can't fix it. To play music, log in with an older Premium account (Settings, Log out). If your account isn't new, try again later.";
 
 /* iPad-Seitenleiste */
 "Recent Playlists" = "Recent Playlists";

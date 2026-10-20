@@ -1,5 +1,6 @@
 #import "MMLoginController.h"
 #import "SpotTheme.h"
+#import "OJTheme.h"
 #import "MMLayout.h"
 #import "MMSpotify.h"
 #import "MMRootController.h"
@@ -27,7 +28,7 @@ MM_IOS6_BEGIN
 MM_IOS6_END
 - (void)loadView {
     self.view=[[UIView alloc] initWithFrame:[UIScreen mainScreen].applicationFrame];   // ohne Statusleiste
-    self.view.backgroundColor=[SpotTheme bg];
+    self.view.backgroundColor=[SpotTheme pageBackground];
     // iPad: alles in einer mittigen Spalte (400 x 640), die beim Drehen mittig bleibt; iPhone: direkt in der Ansicht
     UIView*host=self.view;
     if(MMIsPad()){ CGSize b=self.view.bounds.size;
@@ -37,10 +38,10 @@ MM_IOS6_END
     CGFloat W=host.bounds.size.width, H=host.bounds.size.height;
 
     UIImageView*logo=[[UIImageView alloc] initWithFrame:CGRectMake(W/2-40,H*0.10,80,80)];
-    logo.image=[SpotTheme logo:80]; [host addSubview:logo];
+    logo.image=[UIImage imageNamed:@"Icon@2x.png"]; logo.layer.cornerRadius=14; logo.clipsToBounds=YES; [host addSubview:logo];
 
     UILabel*t=[[UILabel alloc] initWithFrame:CGRectMake(20,H*0.10+92,W-40,32)];
-    t.text=@"Spotify"; t.font=[UIFont boldSystemFontOfSize:28]; t.textColor=[SpotTheme ink]; t.textAlignment=NSTextAlignmentCenter; t.backgroundColor=[UIColor clearColor]; [host addSubview:t];
+    t.text=@"Spofity"; t.font=[UIFont boldSystemFontOfSize:28]; t.textColor=[SpotTheme ink]; t.textAlignment=NSTextAlignmentCenter; t.backgroundColor=[UIColor clearColor]; [host addSubview:t];
 
     UILabel*sub=[[UILabel alloc] initWithFrame:CGRectMake(20,H*0.10+128,W-40,18)];
     sub.text=L(@"Log in with your Spotify account"); sub.font=[SpotTheme sub]; sub.textColor=[SpotTheme muted]; sub.textAlignment=NSTextAlignmentCenter; sub.backgroundColor=[UIColor clearColor]; [host addSubview:sub];
@@ -66,10 +67,11 @@ MM_IOS6_END
     _pairCode.textAlignment=NSTextAlignmentCenter; _pairCode.backgroundColor=[UIColor clearColor]; _pairCode.adjustsFontSizeToFitWidth=YES;
     for(UIView*x in @[_pairHint,_pairURL,and,_pairCode]) [_pairBox addSubview:x];
 
-    _pairBtn=[UIButton buttonWithType:UIButtonTypeCustom];
-    _pairBtn.frame=CGRectMake(40,fy+118,W-80,50); _pairBtn.backgroundColor=[SpotTheme green]; _pairBtn.layer.cornerRadius=25;
+    _pairBtn=[UIButton buttonWithType:UIButtonTypeRoundedRect];
+    _pairBtn.frame=CGRectMake(40,fy+118,W-80,44);
     _pairBtn.titleLabel.font=[UIFont boldSystemFontOfSize:16];
-    [_pairBtn setTitle:L(@"LOG IN WITH PHONE") forState:UIControlStateNormal]; [_pairBtn setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
+    [_pairBtn setTitle:L(@"LOG IN WITH PHONE") forState:UIControlStateNormal];
+    [OJTheme applyGlossyButton:_pairBtn color:[OJTheme accentColor]];
     [_pairBtn addTarget:self action:@selector(startPairing) forControlEvents:UIControlEventTouchUpInside];
     [host addSubview:_pairBtn];
 

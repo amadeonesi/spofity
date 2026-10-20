@@ -137,7 +137,7 @@ static NSDictionary *gLastPlaylist; static CGFloat gLastPlPos=-1;
     UIButton*b=[UIButton buttonWithType:UIButtonTypeCustom]; b.frame=f;
     [b setTitle:t forState:UIControlStateNormal]; b.titleLabel.font=[UIFont boldSystemFontOfSize:13];
     [b setTitleColor:[UIColor colorWithWhite:0.85 alpha:1] forState:UIControlStateNormal];
-    b.layer.borderColor=[UIColor colorWithWhite:0.4 alpha:1].CGColor; b.layer.borderWidth=1; b.layer.cornerRadius=6;
+    b.layer.borderColor=[UIColor colorWithWhite:0.4 alpha:1].CGColor; b.layer.borderWidth=1;
     [self addSubview:b]; return b;
 }
 - (UILabel *)label:(CGRect)f size:(CGFloat)s bold:(BOOL)b color:(UIColor *)c {
@@ -160,7 +160,7 @@ static NSDictionary *gLastPlaylist; static CGFloat gLastPlPos=-1;
         NSArray*pl=j[@"items"];
         if(![pl isKindOfClass:[NSArray class]]){ if(fresh){ [ss->_spin stopAnimating]; ss->_hint.text=L(@"Could not load (offline?)"); } return; }
         NSMutableArray*out=[NSMutableArray array];
-        [out addObject:@{@"name":L(@"Liked Songs"),@"path":LIKED_PATH,@"cover":@"",@"liked":@YES}];   // vorne, wie in der Bibliothek
+        [out addObject:@{@"name":L(@"Liked Songs"),@"path":LIKED_PATH,@"cover":@"",@"liked":@1}];   // vorne, wie in der Bibliothek
         for(NSDictionary*p in pl){
             if(![p isKindOfClass:[NSDictionary class]] || ![p[@"id"] isKindOfClass:[NSString class]]) continue;
             id tr=p[@"tracks"]; id tot=[tr isKindOfClass:[NSDictionary class]]?tr[@"total"]:nil;
@@ -350,12 +350,12 @@ static void setBaked(CALayer*c,NSArray*b){ ((CALayer*)c.sublayers[0]).contents=(
 }
 // Playlist ohne eigenes Bild: Mosaik holen, im Eintrag merken, backen
 - (void)fetchMosaic:(NSInteger)i {
-    NSMutableArray*m=[_items mutableCopy]; NSMutableDictionary*it=[m[i] mutableCopy]; it[@"mosaicTried"]=@YES; m[i]=it; _items=m; _playlists=m;
+    NSMutableArray*m=[_items mutableCopy]; NSMutableDictionary*it=[m[i] mutableCopy]; it[@"mosaicTried"]=@1; m[i]=it; _items=m; _playlists=m;
     NSString*pid=it[@"pid"]; __weak MMCoverFlowView*ws=self;
     [MMCovers playlistCover:pid completion:^(NSString*mu){
         MMCoverFlowView*ss=ws; if(!ss) return;
         NSMutableArray*pl=[ss->_playlists mutableCopy];
-        for(NSUInteger k=0;k<pl.count;k++) if([pl[k][@"pid"] isEqualToString:pid]){ NSMutableDictionary*d=[pl[k] mutableCopy]; d[@"mosaicDone"]=@YES; if(mu) d[@"mosaic"]=mu; pl[k]=d; }
+        for(NSUInteger k=0;k<pl.count;k++) if([pl[k][@"pid"] isEqualToString:pid]){ NSMutableDictionary*d=[pl[k] mutableCopy]; d[@"mosaicDone"]=@1; if(mu) d[@"mosaic"]=mu; pl[k]=d; }
         ss->_playlists=pl; if(!ss->_songs) ss->_items=pl;
         if(mu) [ss bakeURL:mu];
     }];

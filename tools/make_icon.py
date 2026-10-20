@@ -1,4 +1,4 @@
-# Draws the Spotify6 icon in the iOS 6 style: dark textured tile, a glossy raised green disc
+# Draws the Spofity icon in the iOS 6 style: dark textured tile, a glossy raised green disc
 # with a music note pressed into it (Material Icons "music_note", Apache License 2.0), soft cast shadow and top gloss.
 # MARK=glyph (♫ from Arial Unicode) and STYLE=raised (white note) are the alternatives that were compared.
 #   python3 tools/make_icon.py Resources

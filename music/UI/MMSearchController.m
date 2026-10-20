@@ -1,5 +1,7 @@
 #import "MMSearchController.h"
 #import "SpotTheme.h"
+#import "OJTheme.h"
+#import "MMNativeUI.h"
 #import "MMLayout.h"
 #import "MMSpotify.h"
 #import "MMRootController.h"
@@ -10,11 +12,13 @@
 #import "MMArtistController.h"
 #import "MMSongMenu.h"
 
-@interface MMSearchController () <UITableViewDataSource, UITableViewDelegate, UITextFieldDelegate, UIGestureRecognizerDelegate>
+@interface MMSearchController () <UITableViewDataSource, UITableViewDelegate, UISearchBarDelegate, UIGestureRecognizerDelegate>
+- (UITextField *)findTextField:(UIView *)v;
+- (void)styleSearchBar;
 @end
 
 @implementation MMSearchController {
-    UITextField *_field;
+    UISearchBar *_searchBar;
     UITableView *_table;
     UILabel *_hint;
     UIButton *_unlock;   // "Suche freischalten" ohne eigenen Schlüssel
@@ -27,50 +31,54 @@
 
 - (void)loadView {
     self.view=[[UIView alloc] initWithFrame:MMPageFrame(NO)];
-    self.view.backgroundColor=[SpotTheme bg];
+    self.view.backgroundColor=[SpotTheme pageBackground];
     CGFloat W=self.view.bounds.size.width, H=self.view.bounds.size.height;
 
-    UILabel*nav=[[UILabel alloc] initWithFrame:CGRectMake(0,8,W,34)];
-    nav.text=L(@"Search"); nav.font=[UIFont boldSystemFontOfSize:16]; nav.textColor=[SpotTheme ink]; nav.textAlignment=NSTextAlignmentCenter; [self.view addSubview:nav];
+    UINavigationBar *navBar=[MMNativeUI navigationBarWithTitle:L(@"Search") width:W]; [self.view addSubview:navBar];
 
-    // Suchfeld
-    UIView*box=[[UIView alloc] initWithFrame:CGRectMake(16,46,W-32,42)]; box.backgroundColor=[UIColor whiteColor]; box.layer.cornerRadius=8; [self.view addSubview:box];
-    _field=[[UITextField alloc] initWithFrame:CGRectMake(12,0,W-32-24,42)];
-    _field.placeholder=L(@"Artists, songs …"); _field.font=[UIFont systemFontOfSize:15]; _field.textColor=[UIColor blackColor];
-    _field.returnKeyType=UIReturnKeySearch; _field.delegate=self; _field.autocorrectionType=UITextAutocorrectionTypeNo;
-    _field.autoresizingMask=UIViewAutoresizingFlexibleWidth; _field.clearButtonMode=UITextFieldViewModeWhileEditing; _field.contentVerticalAlignment=UIControlContentVerticalAlignmentCenter; [box addSubview:_field];
+    // Native search bar, with extra breathing room below the navigation bar.
+    _searchBar=[[UISearchBar alloc] initWithFrame:CGRectMake(0,44,W,44)];
+    _searchBar.delegate=self; _searchBar.placeholder=L(@"Artists, songs …");
+    _searchBar.autocorrectionType=UITextAutocorrectionTypeNo; _searchBar.autoresizingMask=UIViewAutoresizingFlexibleWidth;
+    _searchBar.showsCancelButton=NO; _searchBar.showsScopeBar=NO; _searchBar.translucent=NO;
+    _searchBar.barStyle=[OJTheme darkMode]?UIBarStyleBlack:UIBarStyleDefault;
+    if([OJTheme darkMode]) _searchBar.tintColor=[UIColor colorWithWhite:0.30 alpha:1];
+    [self.view addSubview:_searchBar];
+    [self styleSearchBar];
 
-    _table=[[UITableView alloc] initWithFrame:CGRectMake(0,98,W,H-98) style:UITableViewStylePlain];
-    _table.backgroundColor=[SpotTheme bg]; _table.separatorStyle=UITableViewCellSeparatorStyleNone;
+    _table=[[UITableView alloc] initWithFrame:CGRectMake(0,94,W,H-94) style:UITableViewStyleGrouped];
+    [OJTheme applyToGroupedTableView:_table];
+    _table.backgroundColor=[UIColor clearColor]; _table.separatorStyle=UITableViewCellSeparatorStyleSingleLine;
     _table.dataSource=self; _table.delegate=self; _table.rowHeight=MMTrackRowH; _table.contentInset=_table.scrollIndicatorInsets=UIEdgeInsetsMake(0,0,MMPageBottomInset(84),0);
     _table.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight; [self.view addSubview:_table];   // mit dem Inhaltsbereich (über der Tab-Leiste) mitschrumpfen   // Platz für Now-Playing + Download-Leiste
 
     _hint=[[UILabel alloc] initWithFrame:CGRectMake(20,140,W-40,40)]; _hint.text=L(@"Find millions of songs."); _hint.textColor=[SpotTheme faint]; _hint.font=[SpotTheme sub]; _hint.textAlignment=NSTextAlignmentCenter; _hint.numberOfLines=0; [self.view addSubview:_hint];
 
-    _unlock=[UIButton buttonWithType:UIButtonTypeCustom]; _unlock.frame=CGRectMake(50,196,W-100,44);
-    _unlock.backgroundColor=[SpotTheme green]; _unlock.layer.cornerRadius=22; _unlock.titleLabel.font=[UIFont boldSystemFontOfSize:14];
-    [_unlock setTitle:L(@"UNLOCK SEARCH") forState:UIControlStateNormal]; [_unlock setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
+    _unlock=[UIButton buttonWithType:UIButtonTypeRoundedRect];
+    _unlock.frame=CGRectMake(50,196,W-100,44);
+    _unlock.titleLabel.font=[UIFont boldSystemFontOfSize:14];
+    [_unlock setTitle:L(@"UNLOCK SEARCH") forState:UIControlStateNormal];
+    [OJTheme applyGlossyButton:_unlock color:[OJTheme accentColor]];
     [_unlock addTarget:self action:@selector(openKeySetup) forControlEvents:UIControlEventTouchUpInside]; [self.view addSubview:_unlock];
     // Schlüssel ändern/entfernen: lange auf "Suche" drücken
-    nav.userInteractionEnabled=YES;
-    [nav addGestureRecognizer:[[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(navLongPress:)]];
+    navBar.userInteractionEnabled=YES;
+    [navBar addGestureRecognizer:[[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(navLongPress:)]];
     __weak MMSearchController*ws=self;   // lange drücken auf einen Titel (Treffer oder zuletzt gesucht) -> Titel-Menü
     [MMSongMenu attachToTable:_table swipeToQueue:YES trackAt:^NSDictionary*(NSIndexPath*ip){ MMSearchController*s=ws; if(!s||ip.section>=(NSInteger)s->_secs.count) return nil;
         NSString*k=s->_secs[ip.section];
         if([k isEqualToString:@"recent"]){ NSDictionary*r=s->_recents[ip.row]; return [r[@"kind"] isEqual:@"track"]?[MMSearchController trackOf:r]:nil; }
         return [k isEqualToString:@"tracks"]?s->_results[ip.row]:nil; }];
-    [_field addTarget:self action:@selector(fieldChanged) forControlEvents:UIControlEventEditingChanged];
     // Tastatur weg: irgendwo daneben tippen (Zeilen bleiben antippbar) oder die Liste ziehen
     UITapGestureRecognizer*kt=[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(hideKeyboard)];
     kt.cancelsTouchesInView=NO; kt.delegate=self; [self.view addGestureRecognizer:kt];
 #ifdef DEBUG
-    [[NSNotificationCenter defaultCenter] addObserverForName:@"MMDebugSearch" object:nil queue:nil usingBlock:^(NSNotification*n){ _field.text=n.object; [self doSearch:n.object]; }];
+    [[NSNotificationCenter defaultCenter] addObserverForName:@"MMDebugSearch" object:nil queue:nil usingBlock:^(NSNotification*n){ _searchBar.text=n.object; [self doSearch:n.object]; }];
 #endif
     MMAutoMask(self.view);   // iPad: Unteransichten folgen der Breite beim Drehen
 }
 
 - (void)viewDidLoad { [super viewDidLoad]; [self refreshKeyState]; [self showRecents]; }
-- (void)viewWillAppear:(BOOL)a { [super viewWillAppear:a]; [self fitBottomInset]; }
+- (void)viewWillAppear:(BOOL)a { [super viewWillAppear:a]; [self fitBottomInset]; [self styleSearchBar]; }
 // Unten genau so viel Platz wie die sichtbaren Leisten brauchen (die Download-Leiste ist meist aus)
 - (void)fitBottomInset { _table.contentInset=_table.scrollIndicatorInsets=UIEdgeInsetsMake(0,0,[[MMRootController shared] bottomBarsHeight]+8,0); }
 
@@ -91,15 +99,28 @@
     _secs=_recents.count?@[@"recent"]:@[]; [self fitBottomInset]; [_table reloadData];
     _hint.hidden=(_recents.count>0); _hint.text=L(@"Find millions of songs.");
 }
-- (void)fieldChanged { if(!_field.text.length) [self showRecents]; }
-- (BOOL)textFieldShouldClear:(UITextField *)tf { dispatch_async(dispatch_get_main_queue(), ^{ [self showRecents]; }); return YES; }
+- (UITextField *)findTextField:(UIView *)v {
+    if([v isKindOfClass:[UITextField class]]) return (UITextField *)v;
+    for(UIView *s in v.subviews){ UITextField *r=[self findTextField:s]; if(r) return r; }
+    return nil;
+}
+- (void)styleSearchBar {
+    UIGraphicsBeginImageContext(CGSizeMake(1,44));
+    [[OJTheme backgroundColor] setFill]; UIRectFill(CGRectMake(0,0,1,44));
+    UIImage *bg=UIGraphicsGetImageFromCurrentImageContext(); UIGraphicsEndImageContext();
+    _searchBar.backgroundImage=bg;
+    UITextField *tf=[self findTextField:_searchBar];
+    if(tf) tf.textColor=[SpotTheme ink];
+}
+- (void)searchBar:(UISearchBar *)sb textDidChange:(NSString *)text { if(!text.length) [self showRecents]; }
+- (void)searchBarSearchButtonClicked:(UISearchBar *)sb { [sb resignFirstResponder]; [self doSearch:sb.text]; }
 - (void)clearRecents {
     [[NSUserDefaults standardUserDefaults] removeObjectForKey:kRecentsKey]; [[NSUserDefaults standardUserDefaults] synchronize];
     [self showRecents];
 }
 - (void)refreshKeyState {
     BOOL has=[MMSpotify hasSearchKey];
-    _unlock.hidden=has; _field.enabled=has; _field.superview.alpha=has?1:0.4;
+    _unlock.hidden=has; _searchBar.userInteractionEnabled=has; _searchBar.alpha=has?1:0.4;
     if(!has){ _results=nil; _artists=nil; _albums=nil; _secs=nil; [_table reloadData]; _hint.hidden=NO;
         _hint.frame=CGRectMake(20,120,self.view.bounds.size.width-40,64);
         _hint.text=L(@"Search needs your own free Spotify key. Set it up once in about 3 minutes."); }
@@ -114,10 +135,9 @@
     [[MMRootController shared] pushContent:k];
 }
 
-- (BOOL)gestureRecognizer:(UIGestureRecognizer *)g shouldReceiveTouch:(UITouch *)t { return _field.isFirstResponder && ![t.view isDescendantOfView:_field.superview]; }
-- (void)hideKeyboard { [self.view endEditing:YES]; }
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)g shouldReceiveTouch:(UITouch *)t { UITextField *tf=[self findTextField:_searchBar]; return tf.isFirstResponder && ![t.view isDescendantOfView:_searchBar]; }
+- (void)hideKeyboard { [_searchBar resignFirstResponder]; }
 - (void)scrollViewWillBeginDragging:(UIScrollView *)sv { [self hideKeyboard]; }
-- (BOOL)textFieldShouldReturn:(UITextField *)tf { [tf resignFirstResponder]; [self doSearch:tf.text]; return YES; }
 
 static NSString* str(id v){ return [v isKindOfClass:[NSString class]]?v:@""; }
 static NSString* firstArtist(NSDictionary*x){ id a=x[@"artists"]; return ([a isKindOfClass:[NSArray class]]&&[a count]&&[a[0] isKindOfClass:[NSDictionary class]])?str(a[0][@"name"]):@""; }
@@ -155,7 +175,7 @@ static NSArray* items(NSDictionary*j,NSString*k){ id v=[j[k] isKindOfClass:[NSDi
 - (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s { return [self rowsOf:s].count; }
 - (CGFloat)tableView:(UITableView *)tv heightForHeaderInSection:(NSInteger)s { return 36; }
 - (UIView *)tableView:(UITableView *)tv viewForHeaderInSection:(NSInteger)s {
-    UIView*v=[[UIView alloc] initWithFrame:CGRectMake(0,0,tv.bounds.size.width,36)]; v.backgroundColor=[SpotTheme bg];
+    UIView*v=[[UIView alloc] initWithFrame:CGRectMake(0,0,tv.bounds.size.width,36)]; v.backgroundColor=[UIColor clearColor];
     UILabel*l=[[UILabel alloc] initWithFrame:CGRectMake(16,8,tv.bounds.size.width-32,24)]; NSString*k=_secs[s];
     l.text=[k isEqualToString:@"recent"]?L(@"Recent searches"):[k isEqualToString:@"artists"]?L(@"Artists"):[k isEqualToString:@"albums"]?L(@"Albums"):L(@"Songs");
     l.font=[UIFont boldSystemFontOfSize:17]; l.textColor=[SpotTheme ink]; l.backgroundColor=[UIColor clearColor]; [v addSubview:l];
@@ -171,21 +191,19 @@ static NSArray* items(NSDictionary*j,NSString*k){ id v=[j[k] isKindOfClass:[NSDi
     CGFloat W=tv.bounds.size.width;
     UITableViewCell*c=[tv dequeueReusableCellWithIdentifier:MMCellID(@"r",tv)];
     if(!c){ c=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:MMCellID(@"r",tv)];
-        c.backgroundColor=[SpotTheme bg]; c.selectionStyle=UITableViewCellSelectionStyleNone;
-        UIImageView*cov=[[UIImageView alloc] initWithFrame:CGRectMake(16,6,44,44)]; cov.tag=1; cov.backgroundColor=[SpotTheme card]; cov.clipsToBounds=YES; cov.contentMode=UIViewContentModeScaleAspectFill; [c.contentView addSubview:cov];
+        c.backgroundColor=[SpotTheme card]; c.selectionStyle=UITableViewCellSelectionStyleNone;
+        UIImageView*cov=[[UIImageView alloc] initWithFrame:CGRectMake(6,6,44,44)]; cov.tag=1; cov.backgroundColor=[SpotTheme card]; cov.clipsToBounds=YES; cov.contentMode=UIViewContentModeScaleAspectFill; [c.contentView addSubview:cov];
         UILabel*ti=[[UILabel alloc] initWithFrame:CGRectMake(70,9,W-70-16,20)]; ti.tag=2; ti.font=[UIFont boldSystemFontOfSize:15]; ti.textColor=[SpotTheme ink]; [c.contentView addSubview:ti];
         UILabel*ar=[[UILabel alloc] initWithFrame:CGRectMake(70,29,W-70-16,18)]; ar.tag=3; ar.font=[SpotTheme sub]; ar.textColor=[SpotTheme muted]; [c.contentView addSubview:ar]; }
     NSString*k=_secs[ip.section]; NSDictionary*r=[self rowsOf:ip.section][ip.row];
     UIImageView*cov=(UIImageView*)[c.contentView viewWithTag:1];
     if([k isEqualToString:@"recent"]){   // gespeicherter Eintrag: Art aus "kind", Untertitel wie in den Treffern
         NSString*kind=r[@"kind"];
-        cov.layer.cornerRadius=[kind isEqual:@"artist"]?24:4;
         ((UILabel*)[c.contentView viewWithTag:2]).text=r[@"name"];
         ((UILabel*)[c.contentView viewWithTag:3]).text=[kind isEqual:@"artist"]?L(@"Artist"):[kind isEqual:@"album"]?LF(@"Album · %@",r[@"sub"]?:@""):LF(@"Song · %@",r[@"sub"]?:@"");
         cov.image=nil; [MMCovers load:r[@"cover"] into:cov];
         return c;
     }
-    cov.layer.cornerRadius=[k isEqualToString:@"artists"]?24:4;   // Artists rund wie in der Spotify-App
     ((UILabel*)[c.contentView viewWithTag:2]).text=[k isEqualToString:@"tracks"]?r[@"title"]:r[@"name"];
     ((UILabel*)[c.contentView viewWithTag:3]).text=[k isEqualToString:@"tracks"]?r[@"artist"]:[k isEqualToString:@"albums"]?r[@"sub"]:L(@"Artist");
     cov.image=nil; [MMCovers load:r[@"cover"] into:cov];

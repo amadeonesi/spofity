@@ -3,7 +3,7 @@
 #import <libkern/OSAtomic.h>
 #import "shannon.h"
 #import <UIKit/UIKit.h>
-#import <CommonCrypto/CommonCrypto.h>
+#import <CommonCrypto/CommonHMAC.h>
 #import <sys/socket.h>
 #import <netinet/in.h>
 #import <netdb.h>
@@ -511,7 +511,7 @@ static BOOL diskHas(NSString*tid){ return tid.length && [[NSFileManager defaultM
 static NSString* streamDir(void){ NSString*d=MMPath(@".spotcache/stream"); [[NSFileManager defaultManager] createDirectoryAtPath:d withIntermediateDirectories:YES attributes:nil error:NULL]; return d; }
 static NSString* streamPath(NSString*tid){ return [NSString stringWithFormat:@"%@/%@.ogg", streamDir(), tid]; }
 static BOOL streamHas(NSString*tid){ return tid.length && [[NSFileManager defaultManager] fileExistsAtPath:streamPath(tid)]; }
-static dispatch_queue_t streamQ(void){ static dispatch_queue_t q; static dispatch_once_t o; dispatch_once(&o,^{ q=dispatch_queue_create("spotify6.streamcache",DISPATCH_QUEUE_SERIAL);
+static dispatch_queue_t streamQ(void){ static dispatch_queue_t q; static dispatch_once_t o; dispatch_once(&o,^{ q=dispatch_queue_create("spofity.streamcache",DISPATCH_QUEUE_SERIAL);
     dispatch_set_target_queue(q,dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND,0)); }); return q; }
 // Älteste löschen, bis höchstens `max` Bytes belegt sind und STREAM_FLOOR frei bleibt. Nur auf streamQ.
 static long long streamTrim(long long max, NSString*keep){
@@ -599,8 +599,8 @@ static NSArray*gLastCdns;   // alle CDN-Adressen der letzten Auflösung (Diagnos
     if(!sr){ if(refreshUserToken()) sr=spclientGet(srp); }
     NSString*cdn=nil; NSMutableArray*all=[NSMutableArray array];
     if(sr){ for(NSData*u in psubs(sr,2)){ NSString*x=[[NSString alloc] initWithData:u encoding:NSUTF8StringEncoding]; if(x.length)[all addObject:x]; } }
-    cdn=all.firstObject; gLastCdns=all;
-    { NSMutableArray*hosts=[NSMutableArray array]; for(NSString*x in all){ NSString*h=[NSURL URLWithString:x].host; if(h)[hosts addObject:h]; } slog(@"cdn hosts: %@",[hosts componentsJoinedByString:@" "]); }
+    cdn=all.count?all[0]:nil; gLastCdns=all;
+    { NSMutableArray*hosts=[NSMutableArray array]; for(NSString*x in all){ NSString*h=[(NSURL *)[NSURL URLWithString:x] host]; if(h)[hosts addObject:h]; } slog(@"cdn hosts: %@",[hosts componentsJoinedByString:@" "]); }
     STEP(@"cdn-url");
     if(!cdn.length){ STEPLOG(); if(err)*err=@"No CDN URL"; return NO; }
     STEPLOG();
@@ -628,7 +628,7 @@ static void aesCTR_mbed(const void*key,const void*in,void*out,size_t n){
 + (NSData *)downloadDecrypt:(NSString *)cdn key:(NSData *)keyData err:(NSString **)err progress:(void(^)(double frac))progress {
     NSError*ne=nil; CFAbsoluteTime t0=CFAbsoluteTimeGetCurrent();
     NSMutableData*enc=cdnFetch(cdn,&ne,progress);
-    slog(@"cdn download %@: %.1f MB in %.1fs%@",[NSURL URLWithString:cdn].host,enc.length/1048576.0,CFAbsoluteTimeGetCurrent()-t0,ne?[@" error: " stringByAppendingString:ne.localizedDescription]:@"");
+    slog(@"cdn download %@: %.1f MB in %.1fs%@",[(NSURL *)[NSURL URLWithString:cdn] host],enc.length/1048576.0,CFAbsoluteTimeGetCurrent()-t0,ne?[@" error: " stringByAppendingString:ne.localizedDescription]:@"");
     if(!enc.length){ if(err)*err=[NSString stringWithFormat:@"CDN download failed (%@)",ne.localizedDescription?:@"empty"]; return nil; }
     CFAbsoluteTime t1=CFAbsoluteTimeGetCurrent();
     NSMutableData*out=enc;   // an Ort und Stelle (mbedTLS-CTR erlaubt gleichen Ein- und Ausgabepuffer): keine zweite Kopie in Songgröße
@@ -985,7 +985,7 @@ static NSInteger gPlayDownloads=0; static NSString*gStreamingId=nil, *gDeferredP
                 if(st){ OSMemoryBarrier(); if(!ne && off==st.data.length){ st.complete=YES; d=st.data; } else st.failed=YES; }   // lief die Wiedergabe schon, hört sie am Ende des Geladenen auf
                 else if(full.length){ ctrRun(cs,full.bytes,full.mutableBytes,full.length); d=full; }
                 ctrFree(cs);
-                slog(@"cdn download %@: %.1f MB in %.1fs%@%@",[NSURL URLWithString:cdn].host,(st?off:full.length)/1048576.0,CFAbsoluteTimeGetCurrent()-t0,st?@" (Stream)":@"",ne?[@" error: " stringByAppendingString:ne.localizedDescription]:@"");
+                slog(@"cdn download %@: %.1f MB in %.1fs%@%@",[(NSURL *)[NSURL URLWithString:cdn] host],(st?off:full.length)/1048576.0,CFAbsoluteTimeGetCurrent()-t0,st?@" (Stream)":@"",ne?[@" error: " stringByAppendingString:ne.localizedDescription]:@"");
                 NSString*dp=nil;
                 @synchronized([MMSpotify class]){ gPlayDownloads--; if([gStreamingId isEqualToString:trackId]) gStreamingId=nil; if(!gPlayDownloads){ dp=gDeferredPrefetch; gDeferredPrefetch=nil; } }
                 if(d.length){ cachePut(trackId,d); streamStore(trackId,d); }   // gespielten Track auch cachen (zurück = sofort, später ohne Netz)
@@ -1576,8 +1576,8 @@ static NSDictionary* spInternalGet(NSString*path,int*st,BOOL*handled){
 + (void)addTrack:(NSString *)trackId toPlaylist:(NSString *)playlistId completion:(void(^)(BOOL ok))done {
     dispatch_async(dispatch_get_global_queue(0,0), ^{
         NSDictionary*body=@{@"deltas":@[@{@"ops":@[@{@"kind":@"ADD",@"add":@{@"items":@[@{@"uri":[@"spotify:track:" stringByAppendingString:trackId],
-                                @"attributes":@{@"timestamp":[NSString stringWithFormat:@"%lld",(long long)([[NSDate date] timeIntervalSince1970]*1000)]}}],@"addLast":@YES}}],
-                            @"info":@{@"source":@{@"client":@"WEBPLAYER"}}}],@"wantResultingRevisions":@NO,@"wantSyncResult":@NO,@"nonces":@[]};
+                                @"attributes":@{@"timestamp":[NSString stringWithFormat:@"%lld",(long long)([[NSDate date] timeIntervalSince1970]*1000)]}}],@"addLast":@1}}],
+                            @"info":@{@"source":@{@"client":@"WEBPLAYER"}}}],@"wantResultingRevisions":@0,@"wantSyncResult":@0,@"nonces":@[]};
         NSData*js=[NSJSONSerialization dataWithJSONObject:body options:0 error:NULL]; int st=0;
         NSData*d=spReq(@"POST",[NSString stringWithFormat:@"/playlist/v2/playlist/%@/changes",playlistId],js,@"application/json;charset=UTF-8",@"application/json",&st);
         BOOL ok=(st>=200&&st<300);

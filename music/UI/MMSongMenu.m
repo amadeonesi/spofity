@@ -1,6 +1,8 @@
 #import "MMSongMenu.h"
 #import <objc/runtime.h>
 #import "SpotTheme.h"
+#import "OJTheme.h"
+#import "MMNativeUI.h"
 #import "MMLayout.h"
 #import "MMSpotify.h"
 #import "MMRootController.h"
@@ -20,19 +22,17 @@
 }
 - (void)loadView {
     self.view=[[UIView alloc] initWithFrame:MMPageFrame(YES)];
-    self.view.backgroundColor=[SpotTheme bg];
+    self.view.backgroundColor=[SpotTheme pageBackground];
     CGFloat W=self.view.bounds.size.width, H=self.view.bounds.size.height;
-    UIButton*back=[UIButton buttonWithType:UIButtonTypeCustom]; back.frame=CGRectMake(8,8,70,34);
-    [back setTitle:L(@"Cancel") forState:UIControlStateNormal]; [back setTitleColor:[SpotTheme ink] forState:UIControlStateNormal];
-    back.titleLabel.font=[UIFont systemFontOfSize:14]; back.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeft;
-    [back addTarget:self action:@selector(close) forControlEvents:UIControlEventTouchUpInside]; [self.view addSubview:back];
-    UILabel*nav=[[UILabel alloc] initWithFrame:CGRectMake(80,8,W-160,34)]; nav.text=L(@"Add to playlist"); nav.font=[UIFont boldSystemFontOfSize:16];
-    nav.textColor=[SpotTheme ink]; nav.textAlignment=NSTextAlignmentCenter; nav.adjustsFontSizeToFitWidth=YES; [self.view addSubview:nav];
-    _table=[[UITableView alloc] initWithFrame:CGRectMake(0,46,W,H-46) style:UITableViewStylePlain];
-    _table.backgroundColor=[SpotTheme bg]; _table.separatorColor=[SpotTheme line]; _table.rowHeight=60; _table.contentInset=UIEdgeInsetsMake(0,0,90,0);
+    UINavigationBar *navBar=[MMNativeUI navigationBarWithTitle:L(@"Add to playlist") width:W];
+    navBar.topItem.leftBarButtonItem=[MMNativeUI itemWithTitle:L(@"Cancel") target:self action:@selector(close)];
+    [self.view addSubview:navBar];
+    _table=[[UITableView alloc] initWithFrame:CGRectMake(0,44,W,H-44) style:UITableViewStyleGrouped];
+    [OJTheme applyToGroupedTableView:_table];
+    _table.backgroundColor=[UIColor clearColor]; _table.separatorColor=[SpotTheme line]; _table.rowHeight=60; _table.contentInset=UIEdgeInsetsMake(0,0,90,0);
     _table.dataSource=self; _table.delegate=self; _table.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight; [self.view addSubview:_table];
     _hint=[[UILabel alloc] initWithFrame:CGRectMake(20,110,W-40,40)]; _hint.textColor=[SpotTheme faint]; _hint.font=[SpotTheme sub]; _hint.textAlignment=NSTextAlignmentCenter; _hint.numberOfLines=2; _hint.hidden=YES; [self.view addSubview:_hint];
-    _spin=[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleWhite]; _spin.center=CGPointMake(W/2,90); _spin.hidesWhenStopped=YES; [_spin startAnimating]; [self.view addSubview:_spin];
+    _spin=[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleGray]; _spin.center=CGPointMake(W/2,90); _spin.hidesWhenStopped=YES; [_spin startAnimating]; [self.view addSubview:_spin];
     NSString*me=[MMSpotify username];
     [MMSpotify apiUserCached:@"me/playlists?limit=50" completion:^(NSDictionary*j,NSInteger st,BOOL fresh){
         [_spin stopAnimating];
@@ -51,8 +51,8 @@
 - (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)s { return _lists.count; }
 - (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
     UITableViewCell*c=[tv dequeueReusableCellWithIdentifier:MMCellID(@"r",tv)];
-    if(!c){ c=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:MMCellID(@"r",tv)]; c.backgroundColor=[SpotTheme bg]; c.selectionStyle=UITableViewCellSelectionStyleNone;
-        UIImageView*th=[[UIImageView alloc] initWithFrame:CGRectMake(12,6,48,48)]; th.tag=10; th.backgroundColor=[SpotTheme card]; th.contentMode=UIViewContentModeScaleAspectFill; th.clipsToBounds=YES; [c.contentView addSubview:th];
+    if(!c){ c=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:MMCellID(@"r",tv)]; c.backgroundColor=[SpotTheme card]; c.selectionStyle=UITableViewCellSelectionStyleNone;
+        UIImageView*th=[[UIImageView alloc] initWithFrame:CGRectMake(6,6,48,48)]; th.tag=10; th.backgroundColor=[SpotTheme card]; th.contentMode=UIViewContentModeScaleAspectFill; th.clipsToBounds=YES; [c.contentView addSubview:th];
         UILabel*nm=[[UILabel alloc] initWithFrame:CGRectMake(72,0,tv.bounds.size.width-88,60)]; nm.tag=11; nm.font=[UIFont systemFontOfSize:16]; nm.textColor=[SpotTheme ink]; [c.contentView addSubview:nm]; }
     NSDictionary*p=_lists[ip.row];
     ((UILabel*)[c.contentView viewWithTag:11]).text=p[@"name"];
@@ -85,11 +85,9 @@ static UIView* topHost(void){ UIViewController*vc=[MMRootController shared]; whi
 + (void)showForTrack:(NSDictionary *)t {
     if(![t[@"id"] length]) return;
     NSNumber*liked=[MMSpotify likedCached:t[@"id"]];
-    if(!liked){   // Lieblingssongs noch nicht im Speicher -> einmal laden, dann Menü
-        [MMSpotify isLiked:t[@"id"] completion:^(BOOL l, BOOL known){ [self show:t liked:known?@(l):nil]; }];
-        return;
-    }
-    [self show:t liked:liked];
+    // Open the menu immediately; do not block the long-press on a network round-trip.
+    [self show:t liked:liked ?: @0];
+    if(!liked) [MMSpotify isLiked:t[@"id"] completion:^(BOOL l, BOOL known){ (void)l; (void)known; }];
 }
 // Album/Artist des Titels öffnen; IDs aus dem Titel (Player) oder aus den Metadaten
 + (void)openPage:(BOOL)album forTrack:(NSDictionary *)t {
@@ -137,8 +135,9 @@ static UIView* topHost(void){ UIViewController*vc=[MMRootController shared]; whi
 + (void)showSaveForTrack:(NSDictionary *)t {
     if(![t[@"id"] length]) return;
     NSNumber*liked=[MMSpotify likedCached:t[@"id"]];
-    if(!liked){ [MMSpotify isLiked:t[@"id"] completion:^(BOOL l, BOOL known){ [self showSave:t liked:known?@(l):nil]; }]; return; }
-    [self showSave:t liked:liked];
+    // Show the sheet immediately; never block the tap on a network round-trip.
+    [self showSave:t liked:liked ?: @0];
+    if(!liked) [MMSpotify isLiked:t[@"id"] completion:^(BOOL l, BOOL known){ (void)l; (void)known; }];
 }
 + (void)showSave:(NSDictionary *)t liked:(NSNumber *)liked {
     NSMutableArray*opts=[NSMutableArray array];

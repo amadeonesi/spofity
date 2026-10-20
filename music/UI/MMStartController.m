@@ -1,5 +1,7 @@
 #import "MMStartController.h"
 #import "SpotTheme.h"
+#import "OJTheme.h"
+#import "MMNativeUI.h"
 #import "MMLayout.h"
 #import "MMRootController.h"
 #import "MMSongMenu.h"
@@ -35,14 +37,12 @@
 
 - (void)loadView {
     self.view=[[UIView alloc] initWithFrame:MMPageFrame(NO)];
-    self.view.backgroundColor=[SpotTheme bg];
+    self.view.backgroundColor=[SpotTheme pageBackground];
     _W=self.view.bounds.size.width;
 
-    _greet=[[UILabel alloc] initWithFrame:CGRectMake(16,10,_W-32,30)];
-    _greet.autoresizingMask=UIViewAutoresizingFlexibleWidth;
-    _greet.text=[self greeting]; _greet.font=[UIFont boldSystemFontOfSize:22]; _greet.textColor=[SpotTheme ink]; [self.view addSubview:_greet];
+    [self.view addSubview:[MMNativeUI navigationBarWithTitle:L(@"Home") width:_W]];
 
-    _sc=[[UIScrollView alloc] initWithFrame:CGRectMake(0,46,_W,self.view.bounds.size.height-46)];
+    _sc=[[UIScrollView alloc] initWithFrame:CGRectMake(0,44,_W,self.view.bounds.size.height-44)];
     _sc.contentInset=UIEdgeInsetsMake(0,0,MMPageBottomInset(84),0); _sc.alwaysBounceVertical=YES;   // Platz für Now-Playing + Download-Leiste
     _sc.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight; [self.view addSubview:_sc];
     _content=[[UIView alloc] initWithFrame:CGRectMake(0,0,_W,0)]; [_sc addSubview:_content];
@@ -164,7 +164,7 @@ static NSArray* byTime(NSArray*a,NSArray*b,NSString*(^key)(NSDictionary*),NSUInt
 - (void)showSkeleton {
     _skel=[[UIView alloc] initWithFrame:CGRectMake(0,0,_W,700)]; _skel.userInteractionEnabled=NO;
     UIColor*c=[SpotTheme card];
-    UIView*(^box)(CGRect,CGFloat)=^UIView*(CGRect r,CGFloat rad){ UIView*v=[[UIView alloc] initWithFrame:r]; v.backgroundColor=c; v.layer.cornerRadius=rad; [_skel addSubview:v]; return v; };
+    UIView*(^box)(CGRect,CGFloat)=^UIView*(CGRect r,CGFloat rad){ UIView*v=[[UIView alloc] initWithFrame:r]; v.backgroundColor=c; v.layer.cornerRadius=0; (void)rad; [_skel addSubview:v]; return v; };
     NSInteger cols=MMGridColumns(_W), rows=(6+cols-1)/cols;
     CGFloat gap=10, tileW=(_W-16*2-gap*(cols-1))/cols, tileH=56, y=8;
     for(int i=0;i<6;i++) box(CGRectMake(16+(i%cols)*(tileW+gap), y+(i/cols)*(tileH+gap), tileW, tileH), 4);
@@ -229,12 +229,14 @@ static NSArray* byTime(NSArray*a,NSArray*b,NSString*(^key)(NSDictionary*),NSUInt
         NSDictionary*it=_quick[i];
         CGFloat col=i%cols, rowY=_y+(i/cols)*(tileH+gap);
         UIView*tile=[[UIView alloc] initWithFrame:CGRectMake(16+col*(tileW+gap),rowY,tileW,tileH)];
-        tile.backgroundColor=[SpotTheme card]; tile.layer.cornerRadius=4; tile.clipsToBounds=YES;
+        tile.backgroundColor=[SpotTheme card]; tile.clipsToBounds=YES;
         UIImageView*cov=[[UIImageView alloc] initWithFrame:CGRectMake(0,0,tileH,tileH)]; cov.contentMode=UIViewContentModeScaleAspectFill; cov.clipsToBounds=YES; cov.backgroundColor=[SpotTheme line]; [tile addSubview:cov];
         if(it[@"liked"]) [MMCovers likedCoverInto:cov];
         else [MMCovers load:it[@"cover"] into:cov];
         UILabel*nm=[[UILabel alloc] initWithFrame:CGRectMake(tileH+6,0,tileW-tileH-8,tileH)]; nm.text=it[@"name"]; nm.numberOfLines=2; nm.font=[UIFont boldSystemFontOfSize:12.5]; nm.textColor=[SpotTheme ink]; [tile addSubview:nm];
         UIButton*tap=[UIButton buttonWithType:UIButtonTypeCustom]; tap.frame=tile.bounds; tap.tag=i; [tap addTarget:self action:@selector(openQuick:) forControlEvents:UIControlEventTouchUpInside]; [tile addSubview:tap];
+        [OJTheme applyGlossToView:tile cornerRadius:0];
+        [OJTheme applyGlossToView:cov cornerRadius:0];
         [_content addSubview:tile];
     }
     int rows=((int)_quick.count+(int)cols-1)/(int)cols; _y+=rows*(tileH+gap)+10;
@@ -275,7 +277,8 @@ static NSArray* byTime(NSArray*a,NSArray*b,NSString*(^key)(NSDictionary*),NSUInt
     for(int i=0;i<(int)tracks.count;i++){
         NSDictionary*t=tracks[i];
         UIView*tile=[[UIView alloc] initWithFrame:CGRectMake(x,0,cw,tileH)];
-        UIImageView*cov=[[UIImageView alloc] initWithFrame:CGRectMake(0,0,cw,cw)]; cov.contentMode=UIViewContentModeScaleAspectFill; cov.clipsToBounds=YES; cov.backgroundColor=[SpotTheme card]; cov.layer.cornerRadius=4; [tile addSubview:cov];
+        UIImageView*cov=[[UIImageView alloc] initWithFrame:CGRectMake(0,0,cw,cw)]; cov.contentMode=UIViewContentModeScaleAspectFill; cov.clipsToBounds=YES; cov.backgroundColor=[SpotTheme card]; [tile addSubview:cov];
+        [OJTheme applyGlossToView:cov cornerRadius:0];
         [MMCovers load:t[@"cover"] into:cov];
         UILabel*ti=[[UILabel alloc] initWithFrame:CGRectMake(0,cw+4,cw,16)]; ti.text=t[@"title"]; ti.font=[UIFont boldSystemFontOfSize:12.5]; ti.textColor=[SpotTheme ink]; [tile addSubview:ti];
         UILabel*ar=[[UILabel alloc] initWithFrame:CGRectMake(0,cw+20,cw,15)]; ar.text=t[@"artist"]; ar.font=[UIFont systemFontOfSize:11]; ar.textColor=[SpotTheme muted]; [tile addSubview:ar];
@@ -295,12 +298,13 @@ static NSArray* byTime(NSArray*a,NSArray*b,NSString*(^key)(NSDictionary*),NSUInt
     UIScrollView*row=[[UIScrollView alloc] initWithFrame:CGRectMake(0,_y,_W,tileH)]; row.showsHorizontalScrollIndicator=NO; row.tag=5; [_content addSubview:row];
     for(int i=0;i<(int)_recent.count;i++){
         NSDictionary*t=_recent[i];
-        UIView*tile=[[UIView alloc] initWithFrame:CGRectMake(x,0,tileW,tileH)]; tile.backgroundColor=[SpotTheme card]; tile.layer.cornerRadius=4; tile.clipsToBounds=YES;
+        UIView*tile=[[UIView alloc] initWithFrame:CGRectMake(x,0,tileW,tileH)]; tile.backgroundColor=[SpotTheme card]; tile.clipsToBounds=YES;
         UIImageView*cov=[[UIImageView alloc] initWithFrame:CGRectMake(0,0,tileH,tileH)]; cov.contentMode=UIViewContentModeScaleAspectFill; cov.clipsToBounds=YES; cov.backgroundColor=[SpotTheme line]; [tile addSubview:cov];
         [MMCovers load:t[@"cover"] into:cov];
         UILabel*ti=[[UILabel alloc] initWithFrame:CGRectMake(tileH+8,9,tileW-tileH-14,20)]; ti.text=t[@"title"]; ti.font=[UIFont boldSystemFontOfSize:12.5]; ti.textColor=[SpotTheme ink]; ti.backgroundColor=[UIColor clearColor]; [tile addSubview:ti];
         UILabel*ar=[[UILabel alloc] initWithFrame:CGRectMake(tileH+8,28,tileW-tileH-14,18)]; ar.text=t[@"artist"]; ar.font=[UIFont systemFontOfSize:11]; ar.textColor=[SpotTheme muted]; ar.backgroundColor=[UIColor clearColor]; [tile addSubview:ar];
         UIButton*tap=[UIButton buttonWithType:UIButtonTypeCustom]; tap.frame=tile.bounds; tap.tag=5000+i; [tap addTarget:self action:@selector(openRowItem:) forControlEvents:UIControlEventTouchUpInside]; [tile addSubview:tap];
+        [OJTheme applyGlossToView:tile cornerRadius:0]; [OJTheme applyGlossToView:cov cornerRadius:0];
         UILongPressGestureRecognizer*lp=[[UILongPressGestureRecognizer alloc] initWithTarget:self action:@selector(tileMenu:)]; lp.minimumPressDuration=0.45; [tap addGestureRecognizer:lp];
         [row addSubview:tile]; x+=tileW+gap;
     }
@@ -332,7 +336,8 @@ static NSArray* byTime(NSArray*a,NSArray*b,NSString*(^key)(NSDictionary*),NSUInt
         NSDictionary*it=items[i];
         UIView*tile=[[UIView alloc] initWithFrame:CGRectMake(x,0,cw,tileH)];
         UIImageView*cov=[[UIImageView alloc] initWithFrame:CGRectMake(0,0,cw,cw)]; cov.contentMode=UIViewContentModeScaleAspectFill; cov.clipsToBounds=YES; cov.backgroundColor=[SpotTheme card];
-        cov.layer.cornerRadius=round?cw/2:4; [tile addSubview:cov];
+        [OJTheme applyGlossToView:cov cornerRadius:0];
+        [tile addSubview:cov];
         if(round){ __weak UIImageView*wc=cov; [MMRecent artistImage:it[@"id"] done:^(NSString*u){ if(u.length && wc) [MMCovers load:u into:wc]; }]; }
         else if([it[@"cover"] length]) [MMCovers load:it[@"cover"] into:cov];
         else [MMCovers playlistCover:it[@"id"] completion:^(NSString*mu){ if(mu.length) [MMCovers load:mu into:cov]; }];   // ohne eigenes Bild: Mosaik
@@ -375,5 +380,5 @@ static NSArray* byTime(NSArray*a,NSArray*b,NSString*(^key)(NSDictionary*),NSUInt
     if(!MMIsPad()) [[MMRootController shared] openPlayer];   // iPad: nur abspielen, die Leiste unten zeigt den Titel
 }
 
-- (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; _greet.text=[self greeting]; }
+- (void)viewWillAppear:(BOOL)animated { [super viewWillAppear:animated]; }
 @end

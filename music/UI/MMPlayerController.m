@@ -1,5 +1,6 @@
 #import "MMPlayerController.h"
 #import "SpotTheme.h"
+#import "OJTheme.h"
 #import "MMLayout.h"
 #import "MMAudio.h"
 #import "MMSpotify.h"
@@ -10,12 +11,40 @@
 #import "MMArtistController.h"
 #import "MMQueueController.h"
 #import "MMSongMenu.h"
+#import <MediaPlayer/MediaPlayer.h>
 
 @interface MMPlayerController () <UIGestureRecognizerDelegate>
 @end
 
+static NSString* fmtTime(double s);
+
+static UIImage *ControlGlyph(NSString *kind, CGFloat s) {
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(s,s),NO,0);
+    [[UIColor whiteColor] setFill];
+    if([kind isEqualToString:@"play"]){
+        UIBezierPath *p=[UIBezierPath bezierPath]; [p moveToPoint:CGPointMake(s*0.30,s*0.20)];
+        [p addLineToPoint:CGPointMake(s*0.30,s*0.80)]; [p addLineToPoint:CGPointMake(s*0.76,s*0.50)]; [p closePath]; [p fill];
+    } else if([kind isEqualToString:@"pause"]){
+        [[UIBezierPath bezierPathWithRect:CGRectMake(s*0.30,s*0.20,s*0.13,s*0.60)] fill];
+        [[UIBezierPath bezierPathWithRect:CGRectMake(s*0.57,s*0.20,s*0.13,s*0.60)] fill];
+    } else if([kind isEqualToString:@"prev"]){
+        [[UIBezierPath bezierPathWithRect:CGRectMake(s*0.12,s*0.20,s*0.08,s*0.60)] fill];
+        UIBezierPath *p=[UIBezierPath bezierPath]; [p moveToPoint:CGPointMake(s*0.48,s*0.20)];
+        [p addLineToPoint:CGPointMake(s*0.48,s*0.80)]; [p addLineToPoint:CGPointMake(s*0.20,s*0.50)]; [p closePath]; [p fill];
+        UIBezierPath *q=[UIBezierPath bezierPath]; [q moveToPoint:CGPointMake(s*0.82,s*0.20)];
+        [q addLineToPoint:CGPointMake(s*0.82,s*0.80)]; [q addLineToPoint:CGPointMake(s*0.54,s*0.50)]; [q closePath]; [q fill];
+    } else { // next
+        [[UIBezierPath bezierPathWithRect:CGRectMake(s*0.80,s*0.20,s*0.08,s*0.60)] fill];
+        UIBezierPath *p=[UIBezierPath bezierPath]; [p moveToPoint:CGPointMake(s*0.52,s*0.20)];
+        [p addLineToPoint:CGPointMake(s*0.52,s*0.80)]; [p addLineToPoint:CGPointMake(s*0.80,s*0.50)]; [p closePath]; [p fill];
+        UIBezierPath *q=[UIBezierPath bezierPath]; [q moveToPoint:CGPointMake(s*0.18,s*0.20)];
+        [q addLineToPoint:CGPointMake(s*0.18,s*0.80)]; [q addLineToPoint:CGPointMake(s*0.46,s*0.50)]; [q closePath]; [q fill];
+    }
+    UIImage *img=UIGraphicsGetImageFromCurrentImageContext(); UIGraphicsEndImageContext(); return img;
+}
+
 @implementation MMPlayerController {
-    BOOL _playing;
+    BOOL _playing, _scrubbing;
     UIView *_playBtn;
     UIView *_coverView;
     UILabel *_titleLbl;
@@ -31,13 +60,21 @@
     MMQueueController *_qDock; BOOL _builtDock;
     UIView *_loadView; double _loadFrac;           // grüner Ladebalken auf der Fortschrittslinie (_loadFrac < 0 = aus)   // iPad quer: Warteschlange als Spalte rechts, der Player rückt nach links
     BOOL _appBehind;           // beim Runterziehen liegt die App selbst hinter dem Player (iOS 6 nimmt sie währenddessen aus dem Fenster)
+    UINavigationBar *_navBar;
+    UIToolbar *_scrubBar;
+    UILabel *_navAlbumLbl, *_navTrackLbl;
+    UIToolbar *_controls;
+    UISlider *_scrubber;
+    UIProgressView *_loadBar;
+    UIBarButtonItem *_prevItem, *_nextItem, *_playItem;
+    MPVolumeView *_volume;
 }
 - (UIColor *)c:(int)r g:(int)g b:(int)b { return [UIColor colorWithRed:r/255.0 green:g/255.0 blue:b/255.0 alpha:1]; }
 
 - (void)loadView {
     _loadFrac=-1;
     self.view=[[UIView alloc] initWithFrame:[UIScreen mainScreen].applicationFrame];   // ohne Statusleiste
-    self.view.backgroundColor=[self c:40 g:34 b:52];   // dunkler Verlauf-Ton
+    self.view.backgroundColor=[SpotTheme pageBackground];
     _playing=[MMAudio isPlaying];
     // Runterziehen von überall oberhalb der Fortschrittsleiste: Player folgt dem Finger (darunter: Spulen und Tasten)
     UIPanGestureRecognizer*drag=[[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(dragDown:)];
@@ -60,104 +97,97 @@ MM_IOS6_END
     [_col removeFromSuperview];
     CGFloat FW=self.view.bounds.size.width-(_qDock?320:0), H=self.view.bounds.size.height, W=MMIsPad()?MIN(FW,528):FW;
     _builtDock=(_qDock!=nil);
-    // Spalte ganz unten einfügen: ein offenes Menü (Sheet) bleibt nach dem Neuaufbau sichtbar
     _col=[[UIView alloc] initWithFrame:CGRectMake(floor((FW-W)/2),0,W,H)]; [self.view insertSubview:_col atIndex:0]; _builtSize=self.view.bounds.size;
+    self.view.backgroundColor=[UIColor blackColor]; _col.backgroundColor=[UIColor blackColor];
 
-    // Kopf: Chevron runter + Albumzeile
-    UIButton*down=[UIButton buttonWithType:UIButtonTypeCustom]; down.frame=CGRectMake(6,8,40,34);
-    UIBezierPath*ch=[UIBezierPath bezierPath]; ch.lineWidth=2; ch.lineCapStyle=kCGLineCapRound;
-    [ch moveToPoint:CGPointMake(12,14)];[ch addLineToPoint:CGPointMake(20,22)];[ch addLineToPoint:CGPointMake(28,14)];
-    UIGraphicsBeginImageContextWithOptions(CGSizeMake(40,34),NO,0);[[SpotTheme ink] setStroke];[ch stroke];UIImage*chImg=UIGraphicsGetImageFromCurrentImageContext();UIGraphicsEndImageContext();
-    [down setImage:chImg forState:UIControlStateNormal];
-    [down addTarget:self action:@selector(close) forControlEvents:UIControlEventTouchUpInside]; [_col addSubview:down];
-    // Warteschlange: Symbol oben rechts (drei Linien, wie in der Spotify-App), gegenüber vom Schließen-Pfeil
-    UIButton*qb=[UIButton buttonWithType:UIButtonTypeCustom]; qb.frame=CGRectMake(W-46,8,40,34);
-    UIGraphicsBeginImageContextWithOptions(CGSizeMake(22,18),NO,0); [[SpotTheme ink] setFill];
-    for(int i=0;i<3;i++){ UIRectFill(CGRectMake(6,2+i*6,16,2)); UIRectFill(CGRectMake(0,2+i*6,2,2)); }
-    [qb setImage:UIGraphicsGetImageFromCurrentImageContext() forState:UIControlStateNormal]; UIGraphicsEndImageContext();
-    [qb addTarget:self action:@selector(openQueue) forControlEvents:UIControlEventTouchUpInside]; [_col addSubview:qb];
-    UILabel*a1=[[UILabel alloc] initWithFrame:CGRectMake(50,10,W-100,14)]; a1.text=L(@"SONG FROM ALBUM"); a1.font=[UIFont systemFontOfSize:10]; a1.textColor=[SpotTheme muted]; a1.textAlignment=NSTextAlignmentCenter; [_col addSubview:a1];
-    UILabel*a2=[[UILabel alloc] initWithFrame:CGRectMake(50,24,W-100,18)]; a2.font=[UIFont boldSystemFontOfSize:12]; a2.textColor=[SpotTheme ink]; a2.textAlignment=NSTextAlignmentCenter; [_col addSubview:a2];
-    _albumLbl=a2; [self refreshAlbum];
+    // Native black navigation bar (Music app style). No tintColor: on iOS 5 that would color the bar itself.
+    _navBar=[[UINavigationBar alloc] initWithFrame:CGRectMake(0,0,W,44)];
+    _navBar.barStyle=UIBarStyleBlack; _navBar.translucent=NO;
+    UINavigationItem *item=[[UINavigationItem alloc] initWithTitle:L(@"Now Playing")];
+    CGFloat tvW=MIN(220,W-150);
+    UIView *tv=[[UIView alloc] initWithFrame:CGRectMake(0,0,tvW,40)];
+    _navAlbumLbl=[[UILabel alloc] initWithFrame:CGRectMake(0,1,tvW,16)];
+    _navAlbumLbl.font=[UIFont systemFontOfSize:10]; _navAlbumLbl.textColor=[UIColor colorWithWhite:0.65 alpha:1];
+    _navAlbumLbl.textAlignment=NSTextAlignmentCenter; _navAlbumLbl.backgroundColor=[UIColor clearColor]; _navAlbumLbl.adjustsFontSizeToFitWidth=YES; _navAlbumLbl.minimumFontSize=8;
+    _navTrackLbl=[[UILabel alloc] initWithFrame:CGRectMake(0,17,tvW,20)];
+    _navTrackLbl.font=[UIFont boldSystemFontOfSize:13]; _navTrackLbl.textColor=[UIColor whiteColor];
+    _navTrackLbl.textAlignment=NSTextAlignmentCenter; _navTrackLbl.backgroundColor=[UIColor clearColor]; _navTrackLbl.adjustsFontSizeToFitWidth=YES; _navTrackLbl.minimumFontSize=9;
+    [tv addSubview:_navAlbumLbl]; [tv addSubview:_navTrackLbl];
+    tv.userInteractionEnabled=YES; [tv addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(openArtist)]];
+    item.titleView=tv;
+    item.leftBarButtonItem=[[UIBarButtonItem alloc] initWithTitle:L(@"Back") style:UIBarButtonItemStyleBordered target:self action:@selector(close)];
+    UIBarButtonItem *add=[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemAdd target:self action:@selector(saveCurrent)];
+    UIBarButtonItem *queue=[[UIBarButtonItem alloc] initWithImage:MMTintedIcon(@"lucide-list",[UIColor whiteColor]) style:UIBarButtonItemStylePlain target:self action:@selector(openQueue)];
+    item.rightBarButtonItems=@[queue,add];
+    _navBar.items=@[item];
+    [_col addSubview:_navBar];
 
-    // ---- Layout von UNTEN verankert, damit alles in 480pt passt ----
-    CGFloat devY   = H-28;      // "Verfügbare Geräte"
-    CGFloat ctrlCy = H-64;      // Steuerungs-Mitte (Play-Button-Top = ctrlCy-19, unten bleiben ~19 pt)
-    CGFloat progY  = H-124;     // Fortschrittsleiste
-    CGFloat arY    = progY-40;  // Künstler
-    CGFloat tiY    = arY-28;    // Titel
-    CGFloat coverTop = 66;
-    CGFloat side = (tiY-16) - coverTop; if(side>W-48) side=W-48; if(side<80) side=80;
-    if(MMIsPad()) coverTop += floor(((tiY-16)-coverTop-side)/2);   // iPad: Cover mittig im freien Platz über dem Titel
-    CGFloat coverX = (W-side)/2;
+    _scrubBar=[[UIToolbar alloc] initWithFrame:CGRectMake(0,44,W,54)];
+    _scrubBar.barStyle=UIBarStyleBlackTranslucent; _scrubBar.translucent=YES;
+    [_col addSubview:_scrubBar];
 
-    // großes Cover (echtes Bild kommt später rein; dunkler Platzhalter)
-    UIView*cover=[[UIView alloc] initWithFrame:CGRectMake(coverX,coverTop,side,side)]; cover.backgroundColor=[SpotTheme card]; cover.layer.cornerRadius=4; cover.clipsToBounds=YES; cover.tag=99;
-    UIActivityIndicatorView*cs=[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleWhiteLarge];
-    cs.center=CGPointMake(side/2,side/2); cs.tag=98; [cs startAnimating]; [cover addSubview:cs];
-    [_col addSubview:cover];
-    _coverView=cover;
-    [cover addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(openAlbum)]];   // Cover -> Album
+    CGFloat barH=50, volH=30, gap=8, bottomMargin=4;
+    CGFloat volY=H-bottomMargin-volH, ctrlY=volY-gap-barH;
 
-    // Titel + Künstler
-    UILabel*t=[[UILabel alloc] initWithFrame:CGRectMake(24,tiY,W-48-44,26)]; t.text=_trackTitle?:@""; t.font=[UIFont boldSystemFontOfSize:19]; t.textColor=[SpotTheme ink]; [_col addSubview:t]; _titleLbl=t;
-    UILabel*ar=[[UILabel alloc] initWithFrame:CGRectMake(24,arY,W-48-44,20)]; ar.text=_trackArtist?:@""; ar.font=[SpotTheme body]; ar.textColor=[SpotTheme muted]; [_col addSubview:ar]; _artistLbl=ar;
-    ar.userInteractionEnabled=YES; [ar addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(openArtist)]];   // Artist -> Artist-Seite
-    // (+) rechts neben Titel/Artist: laufenden Titel zu den Lieblingssongs oder in eine Playlist
-    UIButton*plus=[UIButton buttonWithType:UIButtonTypeCustom]; plus.frame=CGRectMake(W-24-40,tiY+6,44,44);
-    UIGraphicsBeginImageContextWithOptions(CGSizeMake(28,28),NO,0); [[SpotTheme ink] setStroke];
-    UIBezierPath*pc=[UIBezierPath bezierPathWithOvalInRect:CGRectMake(1.5,1.5,25,25)]; pc.lineWidth=1.6; [pc stroke];
-    UIBezierPath*pp=[UIBezierPath bezierPath]; pp.lineWidth=1.8; pp.lineCapStyle=kCGLineCapRound;
-    [pp moveToPoint:CGPointMake(14,8.5)]; [pp addLineToPoint:CGPointMake(14,19.5)]; [pp moveToPoint:CGPointMake(8.5,14)]; [pp addLineToPoint:CGPointMake(19.5,14)]; [pp stroke];
-    [plus setImage:UIGraphicsGetImageFromCurrentImageContext() forState:UIControlStateNormal]; UIGraphicsEndImageContext();
-    [plus addTarget:self action:@selector(saveCurrent) forControlEvents:UIControlEventTouchUpInside]; [_col addSubview:plus];
+    // Scrubber at the top, then repeat/shuffle, then the big square artwork, then the native bottom bar.
+    CGFloat scrubY=50;
+    _trackX=44; _trackW=W-88; _progY=ctrlY;   // drag threshold above controls + volume
+    _t1=[[UILabel alloc] initWithFrame:CGRectMake(8,scrubY,36,16)]; _t1.text=@"0:00"; _t1.font=[UIFont systemFontOfSize:11]; _t1.textColor=[UIColor colorWithWhite:0.75 alpha:1]; _t1.backgroundColor=[UIColor clearColor]; [_col addSubview:_t1];
+    _t2=[[UILabel alloc] initWithFrame:CGRectMake(W-44,scrubY,36,16)]; _t2.text=@"-0:00"; _t2.font=[UIFont systemFontOfSize:11]; _t2.textColor=[UIColor colorWithWhite:0.75 alpha:1]; _t2.textAlignment=NSTextAlignmentRight; _t2.backgroundColor=[UIColor clearColor]; [_col addSubview:_t2];
+    _scrubber=[[UISlider alloc] initWithFrame:CGRectMake(_trackX,scrubY,_trackW,30)];
+    _scrubber.minimumValue=0; _scrubber.maximumValue=1; _scrubber.value=0;
+    [_scrubber addTarget:self action:@selector(sliderChanged:) forControlEvents:UIControlEventValueChanged];
+    [_scrubber addTarget:self action:@selector(sliderEnded:) forControlEvents:UIControlEventTouchUpInside|UIControlEventTouchUpOutside];
+    [OJTheme applyAccentToView:_scrubber];
+    [_col addSubview:_scrubber];
+    _loadBar=[[UIProgressView alloc] initWithProgressViewStyle:UIProgressViewStyleBar];
+    _loadBar.frame=CGRectMake(_trackX,scrubY+30,_trackW,2); _loadBar.hidden=YES; _loadBar.progress=0;
+    [OJTheme applyAccentToView:_loadBar];
+    [_col addSubview:_loadBar];
+
+    _repBtn=[UIButton buttonWithType:UIButtonTypeCustom]; _repBtn.frame=CGRectMake(0,scrubY+16,32,32);
+    [_repBtn addTarget:self action:@selector(cycleRepeat) forControlEvents:UIControlEventTouchUpInside]; [_col addSubview:_repBtn]; [self drawRepeat];
+    _shufBtn=[UIButton buttonWithType:UIButtonTypeCustom]; _shufBtn.frame=CGRectMake(W-32,scrubY+16,32,32);
+    [_shufBtn addTarget:self action:@selector(toggleShuffle) forControlEvents:UIControlEventTouchUpInside]; [_col addSubview:_shufBtn]; [self drawShuffle];
+
+    // Bottom control bar.
+    _controls=[[UIToolbar alloc] initWithFrame:CGRectMake(0,ctrlY,W,barH)];
+    _controls.barStyle=UIBarStyleBlack; _controls.translucent=NO;
+    _prevItem=[[UIBarButtonItem alloc] initWithImage:ControlGlyph(@"prev",34) style:UIBarButtonItemStylePlain target:self action:@selector(prevTrack)];
+    _nextItem=[[UIBarButtonItem alloc] initWithImage:ControlGlyph(@"next",34) style:UIBarButtonItemStylePlain target:self action:@selector(nextTrack)];
+    [self buildControlItems];
+    [_col addSubview:_controls];
+    _volume=[[MPVolumeView alloc] initWithFrame:CGRectMake(20,volY,W-40,volH)];
+    _volume.showsRouteButton=NO;
+    [_col addSubview:_volume];
+    [self applyVolumeAccent];
+
+    // Artwork fills the width and stays square; no rounded corners.
+    CGFloat coverTop=98, availableBottom=ctrlY;
+    CGFloat side=MIN(W-16, availableBottom-coverTop);
+    if(side<80) side=80;
+    coverTop += floor((availableBottom-coverTop-side)/2);
+    CGFloat coverX=floor((W-side)/2);
+    UIView*cover=[[UIView alloc] initWithFrame:CGRectMake(coverX,coverTop,side,side)];
+    cover.backgroundColor=[UIColor colorWithWhite:0.14 alpha:1];
+    cover.clipsToBounds=YES; cover.tag=99;
+    _spinner=[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleWhiteLarge];
+    _spinner.center=CGPointMake(side/2,side/2); _spinner.hidesWhenStopped=YES; [cover addSubview:_spinner];
+    [_col addSubview:cover]; _coverView=cover;
+    [cover addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(openAlbum)]];
     [self loadCover];
 
-    // Fortschrittsleiste
-    _trackX=24; _trackW=W-48; _progY=progY;
-    UIView*track=[[UIView alloc] initWithFrame:CGRectMake(24,progY,W-48,3)]; track.backgroundColor=[self c:80 g:80 b:80]; track.layer.cornerRadius=1.5; [_col addSubview:track];
-    _loadView=[[UIView alloc] initWithFrame:CGRectMake(24,progY,0,3)]; _loadView.backgroundColor=[SpotTheme green]; _loadView.layer.cornerRadius=1.5; [_col addSubview:_loadView]; [self setLoadProgress:_loadFrac];
-    _progView=[[UIView alloc] initWithFrame:CGRectMake(24,progY,0,3)]; _progView.backgroundColor=[SpotTheme ink]; _progView.layer.cornerRadius=1.5; [_col addSubview:_progView];
-    _thumbView=[[UIView alloc] initWithFrame:CGRectMake(24-5,progY-3.5,10,10)]; _thumbView.backgroundColor=[SpotTheme ink]; _thumbView.layer.cornerRadius=5; [_col addSubview:_thumbView];
-    _t1=[[UILabel alloc] initWithFrame:CGRectMake(24,progY+10,60,14)]; _t1.text=@"0:00"; _t1.font=[UIFont systemFontOfSize:11]; _t1.textColor=[SpotTheme muted]; [_col addSubview:_t1];
-    _t2=[[UILabel alloc] initWithFrame:CGRectMake(W-84,progY+10,60,14)]; _t2.text=@"-0:00"; _t2.font=[UIFont systemFontOfSize:11]; _t2.textColor=[SpotTheme muted]; _t2.textAlignment=NSTextAlignmentRight; [_col addSubview:_t2];
-    // Spul-Bereich (tippen oder ziehen)
-    UIView*seek=[[UIView alloc] initWithFrame:CGRectMake(_trackX-12,progY-20,_trackW+24,44)];
-    [seek addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(handleSeek:)]];
-    [seek addGestureRecognizer:[[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(handleSeek:)]];
-    [_col addSubview:seek];
-
-    // Steuerung
-    _shufBtn=[UIButton buttonWithType:UIButtonTypeCustom]; _shufBtn.frame=CGRectMake(24-11,ctrlCy-11,44,44);
-    [_shufBtn addTarget:self action:@selector(toggleShuffle) forControlEvents:UIControlEventTouchUpInside];
-    [_col addSubview:_shufBtn]; [self drawShuffle];
-    [self addCtrl:@"prev" x:W*0.28 cy:ctrlCy sz:26 action:nil];
-    _playBtn=[[UIView alloc] initWithFrame:CGRectMake(W/2-32,ctrlCy-19,64,64)]; _playBtn.backgroundColor=[SpotTheme ink]; _playBtn.layer.cornerRadius=32; [_col addSubview:_playBtn];
-    UIButton*pb=[UIButton buttonWithType:UIButtonTypeCustom]; pb.frame=_playBtn.bounds; [pb addTarget:self action:@selector(togglePlay) forControlEvents:UIControlEventTouchUpInside]; [_playBtn addSubview:pb];
-    [self drawPlayPause];
-    _spinner=[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleGray];
-    _spinner.frame=_playBtn.bounds; _spinner.hidesWhenStopped=YES; _spinner.userInteractionEnabled=NO; [_playBtn addSubview:_spinner];
-    [self addCtrl:@"next" x:W*0.72-26 cy:ctrlCy sz:26 action:nil];
-    _repBtn=[UIButton buttonWithType:UIButtonTypeCustom]; _repBtn.frame=CGRectMake(W-46-11,ctrlCy-11,44,44);
-    [_repBtn addTarget:self action:@selector(cycleRepeat) forControlEvents:UIControlEventTouchUpInside];
-    [_col addSubview:_repBtn]; [self drawRepeat];
-    // Tap-Flächen für Zurück/Weiter
-    UIButton*prevB=[UIButton buttonWithType:UIButtonTypeCustom]; prevB.frame=CGRectMake(W*0.28-9,ctrlCy-9,44,44); [prevB addTarget:self action:@selector(prevTrack) forControlEvents:UIControlEventTouchUpInside]; [_col addSubview:prevB];
-    UIButton*nextB=[UIButton buttonWithType:UIButtonTypeCustom]; nextB.frame=CGRectMake(W*0.72-26-9,ctrlCy-9,44,44); [nextB addTarget:self action:@selector(nextTrack) forControlEvents:UIControlEventTouchUpInside]; [_col addSubview:nextB];
-
-    (void)devY;  // "Verfügbare Geräte" entfernt (keine Connect-Funktion)
+    [self setLoadProgress:_loadFrac];
+    [self refreshAlbum];
+    [self tick];
 }
-
+- (void)buildControlItems {
+    UIBarButtonItem *flex=[[UIBarButtonItem alloc] initWithBarButtonSystemItem:UIBarButtonSystemItemFlexibleSpace target:nil action:nil];
+    _playItem=[[UIBarButtonItem alloc] initWithImage:ControlGlyph(_playing?@"pause":@"play",34) style:UIBarButtonItemStylePlain target:self action:@selector(togglePlay)];
+    _controls.items=@[flex,_prevItem,flex,_playItem,flex,_nextItem,flex];
+}
 - (void)drawPlayPause {
-    for(UIView*v in _playBtn.subviews){ if(v.tag==7)[v removeFromSuperview]; }
-    UIView*icon=[[UIView alloc] initWithFrame:_playBtn.bounds]; icon.tag=7; icon.userInteractionEnabled=NO;
-    if(_playing){ // Pause = zwei Balken
-        for(int i=0;i<2;i++){ UIView*b=[[UIView alloc] initWithFrame:CGRectMake(23+i*12,20,6,24)]; b.backgroundColor=[SpotTheme bg]; [icon addSubview:b]; }   // 23..41 -> mittig im 64er-Kreis
-    } else { // Play = Dreieck
-        UIBezierPath*tri=[UIBezierPath bezierPath]; [tri moveToPoint:CGPointMake(25,20)];[tri addLineToPoint:CGPointMake(25,44)];[tri addLineToPoint:CGPointMake(45,32)];[tri closePath];
-        CAShapeLayer*sl=[CAShapeLayer layer]; sl.path=tri.CGPath; sl.fillColor=[[SpotTheme bg] CGColor]; [icon.layer addSublayer:sl];
-    }
-    [_playBtn addSubview:icon];
+    [self buildControlItems];
 }
 - (void)toggleShuffle { MMRootController*r=[MMRootController shared]; [r setShuffle:!r.shuffle]; [self drawShuffle]; }
 // Spotify-Symbol: zwei gekreuzte Pfeile; an = grün + Punkt darunter
@@ -166,6 +196,8 @@ MM_IOS6_END
 // Spotify-Symbol: Schleife mit Pfeil; an = grün + Punkt, "Titel wiederholen" zusätzlich mit kleiner 1
 - (void)drawRepeat { [_repBtn setImage:[SpotTheme repeatIcon:[MMRootController shared].repeatMode] forState:UIControlStateNormal]; }
 - (void)togglePlay { [[MMRootController shared] togglePlayPause]; _playing=[MMAudio isPlaying]; [self drawPlayPause]; }   // über die Wiedergabe-Logik (Neustart nach Titelende)
+- (void)prevTrack { [[MMRootController shared] playPrev]; }
+- (void)nextTrack { [[MMRootController shared] playNext]; }
 
 - (void)loadCover {
     if(!_coverURL.length) return;
@@ -184,14 +216,29 @@ MM_IOS6_END
 // Von außen aufrufbar, wenn echte Metadaten/Cover nach dem Öffnen eintreffen.
 - (void)updateTitle:(NSString *)title artist:(NSString *)artist cover:(NSString *)cover {
     self.trackTitle=title; self.trackArtist=artist; self.coverURL=cover;
-    _titleLbl.text=title?:@""; _artistLbl.text=artist?:@""; [self loadCover]; [self refreshAlbum];
+    [self loadCover]; [self refreshAlbum];
     [_qDock reload];   // eingeblendete Warteschlange zeigt den neuen Titel
 }
 - (void)setLoadProgress:(double)frac {
-    _loadFrac=frac; _loadView.hidden=(frac<0);
-    if(frac>=0) _loadView.frame=CGRectMake(_trackX,_progY,_trackW*MIN(1,frac),3);
+    _loadFrac=frac; _loadBar.hidden=(frac<0);
+    if(frac>=0) _loadBar.progress=MIN(1.0,frac);
 }
-- (void)refreshAlbum { NSString*al=[MMRootController shared].nowPlaying[@"album"]; _albumLbl.text=al.length?al:(_trackArtist?:@""); }
+- (void)refreshAlbum {
+    NSString*al=[MMRootController shared].nowPlaying[@"album"];
+    if(!al.length) al=_trackArtist?:@"";
+    _navAlbumLbl.text=al;
+    NSString*t=_trackTitle?:@"", *a=_trackArtist?:@"";
+    _navTrackLbl.text=(a.length&&t.length)?[NSString stringWithFormat:@"%@ - %@",a,t]:t;
+}
+- (void)sliderChanged:(UISlider *)slider {
+    _scrubbing=YES;
+    double dur=[MMAudio duration]; if(dur<=0) return;
+    double t=slider.value*dur; _t1.text=fmtTime(t); _t2.text=[NSString stringWithFormat:@"-%@",fmtTime(dur-t)];
+}
+- (void)sliderEnded:(UISlider *)slider {
+    _scrubbing=NO;
+    double dur=[MMAudio duration]; if(dur>0) [MMAudio seekTo:slider.value*dur];
+}
 
 // ---- Album / Artist des laufenden Titels öffnen: Player schließen, Seite im Inhaltsbereich zeigen ----
 // IDs kommen aus den Titel-Metadaten; sind sie noch nicht da (gerade gewechselt), erst nachladen.
@@ -258,14 +305,29 @@ MM_IOS6_END
     iv.image=UIGraphicsGetImageFromCurrentImageContext(); UIGraphicsEndImageContext();
     [_col addSubview:iv];
 }
+- (UISlider *)volumeSliderIn:(UIView *)v {
+    if([v isKindOfClass:[UISlider class]]) return (UISlider *)v;
+    for(UIView *s in v.subviews){ UISlider *r=[self volumeSliderIn:s]; if(r) return r; }
+    return nil;
+}
+- (void)applyVolumeAccent {
+    UISlider *sl=[self volumeSliderIn:_volume];
+    if([sl respondsToSelector:@selector(setMinimumTrackTintColor:)]) sl.minimumTrackTintColor=[OJTheme accentColor];
+}
+- (void)viewWillAppear:(BOOL)animated {
+    [super viewWillAppear:animated];
+    [[UIApplication sharedApplication] setStatusBarStyle:UIStatusBarStyleBlackOpaque animated:NO];
+}
 - (void)viewDidAppear:(BOOL)animated {
     [super viewDidAppear:animated];
+    [self applyVolumeAccent];
     _timer=[NSTimer scheduledTimerWithTimeInterval:0.5 target:self selector:@selector(tick) userInfo:nil repeats:YES];
     [self tick];
 }
 - (void)viewWillDisappear:(BOOL)animated {
     [super viewWillDisappear:animated];
     [_timer invalidate]; _timer=nil;
+    [[UIApplication sharedApplication] setStatusBarStyle:([OJTheme darkMode]?UIStatusBarStyleBlackOpaque:UIStatusBarStyleDefault) animated:NO];
 }
 
 static NSString* fmtTime(double s){ if(s<0)s=0; int m=(int)s/60, sec=(int)s%60; return [NSString stringWithFormat:@"%d:%02d",m,sec]; }
@@ -273,38 +335,15 @@ static NSString* fmtTime(double s){ if(s<0)s=0; int m=(int)s/60, sec=(int)s%60; 
 - (void)tick {
     double cur=[MMAudio currentTime], dur=[MMAudio duration];
     double frac=(dur>0)?(cur/dur):0; if(frac<0)frac=0; if(frac>1)frac=1;
-    CGFloat w=_trackW*frac;
-    _progView.frame=CGRectMake(_trackX,_progY,w,3);
-    _thumbView.frame=CGRectMake(_trackX+w-5,_progY-3.5,10,10);
+    if(!_scrubbing) _scrubber.value=frac;
     _t1.text=fmtTime(cur);
     _t2.text=[NSString stringWithFormat:@"-%@",fmtTime(dur>cur?dur-cur:0)];
-    // Laden -> Spinner statt Play/Pause; sonst Icon mit echtem Zustand synchronisieren
-    UIView*icon=[_playBtn viewWithTag:7];
-    if([MMSpotify isLoading]){
-        if(!_spinner.isAnimating)[_spinner startAnimating];
-        icon.hidden=YES;
-        // Anzeige des alten Tracks zurücksetzen
-        _progView.frame=CGRectMake(_trackX,_progY,0,3); _thumbView.frame=CGRectMake(_trackX-5,_progY-3.5,10,10);
-        _t1.text=@"0:00"; _t2.text=@"-0:00";
-    } else {
-        [_spinner stopAnimating]; icon.hidden=NO;
-        BOOL p=[MMAudio isPlaying];
-        if(p!=_playing){ _playing=p; [self drawPlayPause]; }
+    if([MMSpotify isLoading]) [_spinner startAnimating]; else [_spinner stopAnimating];
+    BOOL p=[MMAudio isPlaying];
+    if(p!=_playing){ _playing=p; [self drawPlayPause]; }
+    if(!_scrubbing && [MMSpotify isLoading]){
+        _t1.text=@"0:00"; _t2.text=@"-0:00"; _scrubber.value=0;
     }
-}
-
-- (void)prevTrack { [[MMRootController shared] playPrev]; }
-- (void)nextTrack { [[MMRootController shared] playNext]; }
-
-- (void)handleSeek:(UIGestureRecognizer *)g {
-    double dur=[MMAudio duration]; if(dur<=0) return;
-    CGPoint p=[g locationInView:_col];
-    double frac=(p.x-_trackX)/_trackW; if(frac<0)frac=0; if(frac>1)frac=1;
-    CGFloat w=_trackW*frac;
-    _progView.frame=CGRectMake(_trackX,_progY,w,3); _thumbView.frame=CGRectMake(_trackX+w-5,_progY-3.5,10,10);
-    _t1.text=fmtTime(frac*dur); _t2.text=[NSString stringWithFormat:@"-%@",fmtTime(dur-frac*dur)];
-    BOOL tap=[g isKindOfClass:[UITapGestureRecognizer class]];
-    if(tap || g.state==UIGestureRecognizerStateEnded) [MMAudio seekTo:frac*dur];
 }
 
 - (void)close { [self dismissViewControllerAnimated:YES completion:nil]; }

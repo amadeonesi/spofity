@@ -1,14 +1,18 @@
 #import "SpotTheme.h"
-static UIColor* rgb(int r,int g,int b){ return [UIColor colorWithRed:r/255.0 green:g/255.0 blue:b/255.0 alpha:1]; }
+#import "OJTheme.h"
 @implementation SpotTheme
-+ (UIColor *)bg    { return rgb(18,18,18); }
-+ (UIColor *)bar   { return rgb(24,24,24); }
-+ (UIColor *)card  { return rgb(40,40,40); }
-+ (UIColor *)green { return rgb(29,185,84); }
-+ (UIColor *)ink   { return [UIColor whiteColor]; }
-+ (UIColor *)muted { return rgb(179,179,179); }
-+ (UIColor *)faint { return rgb(114,114,114); }
-+ (UIColor *)line  { return rgb(42,42,42); }
+// Theme bridge: the accent and light/dark system comes from OJTheme (same as the Installer).
++ (UIColor *)bg    { return [OJTheme backgroundColor]; }
++ (UIColor *)bar   { return [OJTheme darkMode] ? [UIColor colorWithWhite:0.20 alpha:1] : [UIColor colorWithWhite:0.92 alpha:1]; }
++ (UIColor *)card  { return [OJTheme darkMode] ? [UIColor colorWithWhite:0.22 alpha:1] : [UIColor whiteColor]; }
++ (UIColor *)green { return [OJTheme accentColor]; }
++ (UIColor *)ink   { return [OJTheme textColor]; }
++ (UIColor *)muted { return [OJTheme secondaryTextColor]; }
++ (UIColor *)faint { return [OJTheme darkMode] ? [UIColor colorWithWhite:0.60 alpha:1] : [UIColor colorWithWhite:0.56 alpha:1]; }
++ (UIColor *)line  { return [OJTheme darkMode] ? [UIColor colorWithWhite:0.30 alpha:1] : [UIColor colorWithWhite:0.78 alpha:1]; }
++ (UIColor *)pageBackground { return [OJTheme backgroundColor]; }
++ (UIColor *)barBackground { return [self bar]; }
++ (UIColor *)barBackgroundForHeight:(CGFloat)height { return [self bar]; }
 + (UIFont *)h1  { return [UIFont boldSystemFontOfSize:22]; }
 + (UIFont *)h2  { return [UIFont boldSystemFontOfSize:17]; }
 + (UIFont *)body{ return [UIFont systemFontOfSize:15]; }
@@ -30,7 +34,7 @@ static UIColor* rgb(int r,int g,int b){ return [UIColor colorWithRed:r/255.0 gre
 + (void)spaced:(UILabel *)label text:(NSString *)text font:(UIFont *)font color:(UIColor *)color kern:(CGFloat)kern {
     if ([label respondsToSelector:@selector(setAttributedText:)]) {   // iOS 6; iOS 5: schlichter Text ohne Laufweite
         MM_IOS6_BEGIN
-        label.attributedText = [[NSAttributedString alloc] initWithString:text ?: @"" attributes:@{NSKernAttributeName:@(kern), NSFontAttributeName:font, NSForegroundColorAttributeName:color}];
+        label.attributedText = [[NSAttributedString alloc] initWithString:text ?: @"" attributes:@{@"NSKern":@(kern), @"NSFont":font, @"NSColor":color}];
         MM_IOS6_END
     } else { label.text = text; label.font = font; label.textColor = color; }
 }

@@ -3,7 +3,7 @@
 #define MMStatusH 20   // Höhe der Statusleiste über dem Inhalt (normale Oberfläche)
 @interface MMRootController : UIViewController
 + (instancetype)shared;
-+ (void)confirmLogout;   // fragt nach, meldet ab und schließt Spotify6 (beim nächsten Start: Anmeldung)
++ (void)confirmLogout;   // fragt nach, meldet ab und schließt Spofity (beim nächsten Start: Anmeldung)
 - (void)showNowPlayingTitle:(NSString *)title artist:(NSString *)artist;  // Now-Playing-Leiste füllen
 // Spielt einen echten Track ab (Titel/Artist provisorisch; echte Metadaten + Cover werden nachgeladen).
 - (void)playTrackId:(NSString *)trackId title:(NSString *)title artist:(NSString *)artist cover:(NSString *)cover;

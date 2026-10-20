@@ -1,5 +1,7 @@
 #import "MMKeySetupController.h"
 #import "SpotTheme.h"
+#import "OJTheme.h"
+#import "MMNativeUI.h"
 #import "MMLayout.h"
 #import "MMSpotify.h"
 #import "MeshL10n.h"
@@ -24,14 +26,16 @@
 
 // Wert zum Abtippen/Kopieren (Adresse, Redirect URI) in einer Box hervorheben
 - (void)valueBox:(NSString *)value x:(CGFloat)x {
-    UIView*box=[[UIView alloc] initWithFrame:CGRectMake(x,_y,_W-x-16,30)]; box.backgroundColor=[SpotTheme card]; box.layer.cornerRadius=4;
+    UIView*box=[[UIView alloc] initWithFrame:CGRectMake(x,_y,_W-x-16,30)]; box.backgroundColor=[SpotTheme card];
+    [OJTheme applyGlossToView:box cornerRadius:4];
     UILabel*l=[[UILabel alloc] initWithFrame:CGRectInset(box.bounds,8,0)];
     l.text=value; l.font=[UIFont fontWithName:@"Courier-Bold" size:13]; l.textColor=[SpotTheme green]; l.adjustsFontSizeToFitWidth=YES; l.backgroundColor=[UIColor clearColor];
     [box addSubview:l]; [_scroll addSubview:box]; _y+=36;
 }
 
 - (void)step:(int)n text:(NSString *)text value:(NSString *)value {
-    UIView*dot=[[UIView alloc] initWithFrame:CGRectMake(16,_y,24,24)]; dot.backgroundColor=[SpotTheme green]; dot.layer.cornerRadius=12;
+    UIView*dot=[[UIView alloc] initWithFrame:CGRectMake(16,_y,24,24)]; dot.backgroundColor=[SpotTheme green];
+    [OJTheme applyGlossToView:dot cornerRadius:12];
     UILabel*num=[[UILabel alloc] initWithFrame:dot.bounds]; num.text=[NSString stringWithFormat:@"%d",n]; num.font=[UIFont boldSystemFontOfSize:13];
     num.textColor=[UIColor blackColor]; num.textAlignment=NSTextAlignmentCenter; num.backgroundColor=[UIColor clearColor]; [dot addSubview:num];
     [_scroll addSubview:dot];
@@ -45,9 +49,10 @@
     [self label:title font:[UIFont boldSystemFontOfSize:13] color:[SpotTheme muted] x:16 w:_W-32];
     UILabel*c=[[UILabel alloc] initWithFrame:CGRectMake(_W-96,_y,80,16)]; c.font=[SpotTheme sub]; c.textColor=[SpotTheme faint]; c.textAlignment=NSTextAlignmentRight; c.text=@"0/32";
     [_scroll addSubview:c]; *counter=c; _y+=20;
-    UIView*box=[[UIView alloc] initWithFrame:CGRectMake(16,_y,_W-32,42)]; box.backgroundColor=[UIColor whiteColor]; box.layer.cornerRadius=6; [_scroll addSubview:box];
+    UIView*box=[[UIView alloc] initWithFrame:CGRectMake(16,_y,_W-32,42)]; box.backgroundColor=[SpotTheme card];
+    [OJTheme applyGlossToView:box cornerRadius:6]; [_scroll addSubview:box];
     UITextField*f=[[UITextField alloc] initWithFrame:CGRectMake(10,0,_W-52,42)];
-    f.font=[UIFont fontWithName:@"Courier" size:15]; f.textColor=[UIColor blackColor]; f.adjustsFontSizeToFitWidth=YES; f.minimumFontSize=10;
+    f.font=[UIFont fontWithName:@"Courier" size:15]; f.textColor=[SpotTheme ink]; f.adjustsFontSizeToFitWidth=YES; f.minimumFontSize=10;
     f.autocorrectionType=UITextAutocorrectionTypeNo; f.autocapitalizationType=UITextAutocapitalizationTypeNone; f.spellCheckingType=UITextSpellCheckingTypeNo;
     f.keyboardType=UIKeyboardTypeASCIICapable; f.clearButtonMode=UITextFieldViewModeWhileEditing; f.contentVerticalAlignment=UIControlContentVerticalAlignmentCenter;
     f.placeholder=L(@"32 characters (0-9, a-f)"); f.delegate=self;
@@ -61,30 +66,25 @@ MM_IOS6_BEGIN
 MM_IOS6_END
 - (void)loadView {
     self.view=[[UIView alloc] initWithFrame:MMPageFrame(NO)];
-    self.view.backgroundColor=[SpotTheme bg];
+    self.view.backgroundColor=[SpotTheme pageBackground];
     _W=self.view.bounds.size.width; CGFloat H=self.view.bounds.size.height, sx=0;
+    UINavigationBar *navBar=[MMNativeUI navigationBarWithTitle:L(@"Unlock search") width:self.view.bounds.size.width];
+    navBar.topItem.leftBarButtonItem=[MMNativeUI itemWithTitle:(self.skippable?L(@"Cancel"):L(@"Back")) target:self action:@selector(skip)];
+    [self.view addSubview:navBar];
     if(MMIsPad()){ sx=floor((_W-MMPadColumnW)/2); _W=MMPadColumnW; }   // iPad: mittige Spalte, bleibt beim Drehen mittig
-    _scroll=[[UIScrollView alloc] initWithFrame:CGRectMake(sx,0,_W,H)]; _scroll.alwaysBounceVertical=YES;
+    _scroll=[[UIScrollView alloc] initWithFrame:CGRectMake(sx,44,_W,H-44)]; _scroll.alwaysBounceVertical=YES;
     _scroll.autoresizingMask=UIViewAutoresizingFlexibleHeight|(MMIsPad()?UIViewAutoresizingFlexibleLeftMargin|UIViewAutoresizingFlexibleRightMargin:0); [self.view addSubview:_scroll];
     // Tippen neben die Felder schließt die Tastatur
     UITapGestureRecognizer*tap=[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(hideKeyboard)]; tap.cancelsTouchesInView=NO;
     [_scroll addGestureRecognizer:tap];
 
-    _y=8;
-    if(!self.skippable){
-        UIButton*back=[UIButton buttonWithType:UIButtonTypeCustom]; back.frame=CGRectMake(8,_y,80,34);
-        [SpotTheme styleBackButton:back]; [back setTitleColor:[SpotTheme ink] forState:UIControlStateNormal];
-        back.titleLabel.font=[UIFont systemFontOfSize:14]; back.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeft;
-        [back addTarget:self action:@selector(skip) forControlEvents:UIControlEventTouchUpInside]; [_scroll addSubview:back];
-    }
-    _y=48;
-    [self label:L(@"Unlock search") font:[SpotTheme h1] color:[SpotTheme ink] x:16 w:_W-32]; _y+=32;
+    _y=16;
     UILabel*intro=[self label:L(@"Spotify only allows search with your own free developer key. You set it up once, takes about 3 minutes – best on your phone or computer.") font:[SpotTheme sub] color:[SpotTheme muted] x:16 w:_W-32];
     _y+=intro.frame.size.height+20;
 
     [self step:1 text:L(@"Open this page and log in with your Spotify account:") value:@"developer.spotify.com/dashboard"];
     [self step:2 text:L(@"First time only: accept the terms and confirm your email address if asked.") value:nil];
-    [self step:3 text:L(@"Tap \"Create app\". Enter any name and description, e.g. \"Spotify6\".") value:nil];
+    [self step:3 text:L(@"Tap \"Create app\". Enter any name and description, e.g. \"Spofity\".") value:nil];
     [self step:4 text:L(@"For \"Redirect URIs\" enter exactly this and tap \"Add\":") value:@"http://127.0.0.1:8888/callback"];
     [self step:5 text:L(@"Under \"Which API/SDKs\" tick \"Web API\", accept the terms and tap \"Save\".") value:nil];
     [self step:6 text:L(@"Open \"Settings\" of your new app. Copy the \"Client ID\" and tap \"View client secret\" for the secret.") value:nil];
@@ -94,10 +94,11 @@ MM_IOS6_END
     _sec=[self field:L(@"CLIENT SECRET") counter:&_secCount];
     _cid.returnKeyType=UIReturnKeyNext; _sec.returnKeyType=UIReturnKeyGo;
 
-    _save=[UIButton buttonWithType:UIButtonTypeCustom];
-    _save.frame=CGRectMake(40,_y,_W-80,48); _save.backgroundColor=[SpotTheme green]; _save.layer.cornerRadius=24;
+    _save=[UIButton buttonWithType:UIButtonTypeRoundedRect];
+    _save.frame=CGRectMake(40,_y,_W-80,44);
     _save.titleLabel.font=[UIFont boldSystemFontOfSize:15];
-    [_save setTitle:L(@"CHECK & SAVE") forState:UIControlStateNormal]; [_save setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
+    [_save setTitle:L(@"CHECK & SAVE") forState:UIControlStateNormal];
+    [OJTheme applyGlossyButton:_save color:[OJTheme accentColor]];
     [_save addTarget:self action:@selector(save) forControlEvents:UIControlEventTouchUpInside]; [_scroll addSubview:_save];
     _y+=58;
     _status=[[UILabel alloc] initWithFrame:CGRectMake(16,_y,_W-32,54)]; _status.font=[SpotTheme sub]; _status.textColor=[SpotTheme muted];

@@ -10,6 +10,37 @@
 - (void)setObject:(id)obj atIndexedSubscript:(unsigned int)idx;
 @end
 #import <UIKit/UIKit.h>
+#import <QuartzCore/QuartzCore.h>   // iOS 5 UIKit forward-declares CALayer; layer.cornerRadius needs the real header
+
+// iOS 5 SDK: these exist only in the iOS 6 headers. Values match the runtime constants.
+#if __IPHONE_OS_VERSION_MAX_ALLOWED < 60000
+typedef NSUInteger UIInterfaceOrientationMask;
+enum {
+    UIInterfaceOrientationMaskPortrait           = (1 << UIInterfaceOrientationPortrait),
+    UIInterfaceOrientationMaskLandscapeLeft      = (1 << UIInterfaceOrientationLandscapeLeft),
+    UIInterfaceOrientationMaskLandscapeRight     = (1 << UIInterfaceOrientationLandscapeRight),
+    UIInterfaceOrientationMaskPortraitUpsideDown = (1 << UIInterfaceOrientationPortraitUpsideDown),
+    UIInterfaceOrientationMaskLandscape          = (UIInterfaceOrientationMaskLandscapeLeft | UIInterfaceOrientationMaskLandscapeRight),
+    UIInterfaceOrientationMaskAll                = (UIInterfaceOrientationMaskPortrait | UIInterfaceOrientationMaskLandscapeLeft |
+                                                    UIInterfaceOrientationMaskLandscapeRight | UIInterfaceOrientationMaskPortraitUpsideDown),
+    UIInterfaceOrientationMaskAllButUpsideDown   = (UIInterfaceOrientationMaskPortrait | UIInterfaceOrientationMaskLandscapeLeft |
+                                                    UIInterfaceOrientationMaskLandscapeRight)
+};
+@interface UILabel (MMCompat)
+@property (nonatomic, copy) NSAttributedString *attributedText;   // iOS 6; guarded by respondsToSelector at runtime
+@end
+// iOS 6 interruption notifications. Same names/values as the iOS 6 SDK, used only when the notification fires.
+#define AVAudioSessionInterruptionNotification      @"AVAudioSessionInterruptionNotification"
+#define AVAudioSessionInterruptionTypeKey           @"AVAudioSessionInterruptionTypeKey"
+#define AVAudioSessionInterruptionOptionKey         @"AVAudioSessionInterruptionOptionKey"
+enum {
+    AVAudioSessionInterruptionTypeEnded = 0,
+    AVAudioSessionInterruptionTypeBegan = 1
+};
+enum {
+    AVAudioSessionInterruptionOptionShouldResume = 1
+};
+#endif
 
 // Objekt-Subscripting (d[@"k"], a[0], d[@"k"]=v, a[i]=v) gibt es erst ab iOS 6. libarclite, das die Methoden früher
 // für iOS 5 nachrüstete, liefert Xcode nicht mehr mit -> MMCompat.m hängt sie beim Start ein, wo sie fehlen.

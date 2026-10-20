@@ -15,7 +15,11 @@ case "${1:-}" in
   "") curl -fL --proto '=https' -o "$DEST.tmp" "$URL" && mv "$DEST.tmp" "$DEST" ;;
   *) cp "$1" "$DEST" ;;
 esac
-GOT="$(shasum -a 256 "$DEST" | cut -d' ' -f1)"
+if command -v sha256sum >/dev/null 2>&1; then
+  GOT="$(sha256sum "$DEST" | cut -d' ' -f1)"
+else
+  GOT="$(shasum -a 256 "$DEST" | cut -d' ' -f1)"
+fi
 if [ "$GOT" != "$SHA" ]; then
   echo "checksum mismatch for $DEST: $GOT"
   rm -f "$DEST"

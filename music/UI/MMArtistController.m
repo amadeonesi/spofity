@@ -1,5 +1,7 @@
 #import "MMArtistController.h"
 #import "SpotTheme.h"
+#import "OJTheme.h"
+#import "MMNativeUI.h"
 #import "MMLayout.h"
 #import "MMSpotify.h"
 #import "MMRootController.h"
@@ -13,7 +15,7 @@
 
 @implementation MMArtistController {
     NSString *_artistId, *_name, *_portraitURL;
-    UILabel *_nav, *_hint, *_bigName;
+    UILabel *_hint, *_bigName; UINavigationBar *_navBar;
     UIImageView *_portrait;
     UITableView *_table, *_table2;   // iPad: _table links "Beliebt", _table2 rechts Alben / Singles & EPs
     UIActivityIndicatorView *_spin;
@@ -28,18 +30,16 @@
 
 - (void)loadView {
     self.view=[[UIView alloc] initWithFrame:MMPageFrame(YES)];
-    self.view.backgroundColor=[SpotTheme bg];
+    self.view.backgroundColor=[SpotTheme pageBackground];
     CGFloat W=self.view.bounds.size.width, H=self.view.bounds.size.height;
 
-    UIButton*back=[UIButton buttonWithType:UIButtonTypeCustom]; back.frame=CGRectMake(8,8,80,34);
-    [SpotTheme styleBackButton:back]; [back setTitleColor:[SpotTheme ink] forState:UIControlStateNormal];
-    back.titleLabel.font=[UIFont systemFontOfSize:14]; back.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeft;
-    [back addTarget:self action:@selector(close) forControlEvents:UIControlEventTouchUpInside]; [self.view addSubview:back];
-    _nav=[[UILabel alloc] initWithFrame:CGRectMake(70,8,W-140,34)];
-    _nav.text=_name?:@""; _nav.font=[UIFont boldSystemFontOfSize:16]; _nav.textColor=[SpotTheme ink]; _nav.textAlignment=NSTextAlignmentCenter; _nav.adjustsFontSizeToFitWidth=YES; [self.view addSubview:_nav];
+    UINavigationBar *navBar=[MMNativeUI navigationBarWithTitle:_name width:W]; _navBar=navBar;
+    navBar.topItem.leftBarButtonItem=[MMNativeUI backItemTarget:self action:@selector(close)];
+    [self.view addSubview:navBar];
 
-    _table=[[UITableView alloc] initWithFrame:CGRectMake(0,46,W,H-46) style:UITableViewStylePlain];
-    _table.backgroundColor=[SpotTheme bg]; _table.separatorStyle=UITableViewCellSeparatorStyleNone;
+    _table=[[UITableView alloc] initWithFrame:CGRectMake(0,44,W,H-44) style:UITableViewStyleGrouped];
+    [OJTheme applyToGroupedTableView:_table];
+    _table.backgroundColor=[UIColor clearColor]; _table.separatorStyle=UITableViewCellSeparatorStyleSingleLine;
     _table.dataSource=self; _table.delegate=self; _table.rowHeight=MMTrackRowH; _table.contentInset=UIEdgeInsetsMake(0,0,MMPageBottomInset(90),0);
     _table.autoresizingMask=UIViewAutoresizingFlexibleHeight|UIViewAutoresizingFlexibleWidth; [self.view addSubview:_table];
 
@@ -52,11 +52,12 @@
     MMAutoMask(head);   // iPad: Bild und Name bleiben beim Drehen mittig
     if(MMIsPad()){
         // iPad: Kopf fest oben, darunter zwei Spalten, die jede für sich scrollen (wie Spotify 2012 auf dem iPad)
-        head.frame=CGRectMake(0,46,W,172); head.autoresizingMask=UIViewAutoresizingFlexibleWidth; [self.view addSubview:head];
-        CGFloat ty=46+172, lw=floor(W/2);
+        head.frame=CGRectMake(0,44,W,172); head.autoresizingMask=UIViewAutoresizingFlexibleWidth; [self.view addSubview:head];
+        CGFloat ty=44+172, lw=floor(W/2);
         _table.frame=CGRectMake(0,ty,lw,H-ty); _table.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleRightMargin|UIViewAutoresizingFlexibleHeight;
-        _table2=[[UITableView alloc] initWithFrame:CGRectMake(lw,ty,W-lw,H-ty) style:UITableViewStylePlain];
-        _table2.backgroundColor=[SpotTheme bg]; _table2.separatorStyle=UITableViewCellSeparatorStyleNone; _table2.dataSource=self; _table2.delegate=self;
+        _table2=[[UITableView alloc] initWithFrame:CGRectMake(lw,ty,W-lw,H-ty) style:UITableViewStyleGrouped];
+        [OJTheme applyToGroupedTableView:_table2];
+        _table2.backgroundColor=[UIColor clearColor]; _table2.separatorStyle=UITableViewCellSeparatorStyleSingleLine; _table2.dataSource=self; _table2.delegate=self;
         _table2.rowHeight=MMTrackRowH; _table2.contentInset=_table.contentInset;
         _table2.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleLeftMargin|UIViewAutoresizingFlexibleHeight; [self.view addSubview:_table2];
     } else _table.tableHeaderView=head;
@@ -66,7 +67,7 @@
         NSDictionary*sec=ss[ip.section]; return [sec[@"kind"] isEqualToString:@"tracks"]?sec[@"rows"][ip.row]:nil; }];
 
     _hint=[[UILabel alloc] initWithFrame:CGRectMake(20,240,W-40,40)]; _hint.textColor=[SpotTheme faint]; _hint.font=[SpotTheme sub]; _hint.textAlignment=NSTextAlignmentCenter; _hint.numberOfLines=2; _hint.hidden=YES; [self.view addSubview:_hint];
-    _spin=[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleWhite];
+    _spin=[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleGray];
     _spin.center=CGPointMake(W/2,250); _spin.hidesWhenStopped=YES; [_spin startAnimating]; [self.view addSubview:_spin];
 
     [self load];
@@ -85,7 +86,7 @@ static NSString* yearOf(NSDictionary*a){ id y=a[@"release_date"]; return [y isKi
 
 - (void)show:(NSDictionary *)j {
     NSString*nm=[j[@"name"] isKindOfClass:[NSString class]]?j[@"name"]:@"";
-    if(nm.length){ _name=nm; _nav.text=nm; _bigName.text=nm; }
+    if(nm.length){ _name=nm; _navBar.topItem.title=nm; _bigName.text=nm; }
     NSString*pu=[MMCovers bestURL:j[@"images"]]; if(pu.length){ _portraitURL=pu; [MMCovers load:pu into:_portrait]; }
     NSMutableArray*tr=[NSMutableArray array];
     for(NSDictionary*t in ([j[@"top_tracks"] isKindOfClass:[NSArray class]]?j[@"top_tracks"]:@[])){
@@ -117,7 +118,7 @@ static NSString* yearOf(NSDictionary*a){ id y=a[@"release_date"]; return [y isKi
 - (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)s { return [[self secs:tv][s][@"rows"] count]; }
 - (CGFloat)tableView:(UITableView *)tv heightForHeaderInSection:(NSInteger)s { return 40; }
 - (UIView *)tableView:(UITableView *)tv viewForHeaderInSection:(NSInteger)s {
-    UIView*v=[[UIView alloc] initWithFrame:CGRectMake(0,0,tv.bounds.size.width,40)]; v.backgroundColor=[SpotTheme bg];
+    UIView*v=[[UIView alloc] initWithFrame:CGRectMake(0,0,tv.bounds.size.width,40)]; v.backgroundColor=[UIColor clearColor];
     UILabel*l=[[UILabel alloc] initWithFrame:CGRectMake(16,8,tv.bounds.size.width-32,28)]; l.text=[self secs:tv][s][@"title"];
     l.font=[UIFont boldSystemFontOfSize:18]; l.textColor=[SpotTheme ink]; l.backgroundColor=[UIColor clearColor]; [v addSubview:l];
     return v;
@@ -126,8 +127,8 @@ static NSString* yearOf(NSDictionary*a){ id y=a[@"release_date"]; return [y isKi
     CGFloat W=tv.bounds.size.width;
     UITableViewCell*c=[tv dequeueReusableCellWithIdentifier:MMCellID(@"r",tv)];
     if(!c){ c=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:MMCellID(@"r",tv)];
-        c.backgroundColor=[SpotTheme bg]; c.selectionStyle=UITableViewCellSelectionStyleNone;
-        UIImageView*cov=[[UIImageView alloc] initWithFrame:CGRectMake(16,6,44,44)]; cov.tag=1; cov.backgroundColor=[SpotTheme card]; cov.layer.cornerRadius=4; cov.clipsToBounds=YES; cov.contentMode=UIViewContentModeScaleAspectFill; [c.contentView addSubview:cov];
+        c.backgroundColor=[SpotTheme card]; c.selectionStyle=UITableViewCellSelectionStyleNone;
+        UIImageView*cov=[[UIImageView alloc] initWithFrame:CGRectMake(6,6,44,44)]; cov.tag=1; cov.backgroundColor=[SpotTheme card]; cov.clipsToBounds=YES; cov.contentMode=UIViewContentModeScaleAspectFill; [c.contentView addSubview:cov];
         UILabel*ti=[[UILabel alloc] initWithFrame:CGRectMake(70,9,W-70-16,20)]; ti.tag=2; ti.font=[UIFont boldSystemFontOfSize:15]; ti.textColor=[SpotTheme ink]; [c.contentView addSubview:ti];
         UILabel*sb=[[UILabel alloc] initWithFrame:CGRectMake(70,29,W-70-16,18)]; sb.tag=3; sb.font=[SpotTheme sub]; sb.textColor=[SpotTheme muted]; [c.contentView addSubview:sb]; }
     NSDictionary*sec=[self secs:tv][ip.section], *r=sec[@"rows"][ip.row];

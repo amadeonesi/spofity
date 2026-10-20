@@ -1,5 +1,7 @@
 #import "MMBrowseController.h"
 #import "SpotTheme.h"
+#import "OJTheme.h"
+#import "MMNativeUI.h"
 #import "MMLayout.h"
 #import "MMRootController.h"
 #import "MMTrackListController.h"
@@ -16,13 +18,12 @@
 
 - (void)loadView {
     self.view=[[UIView alloc] initWithFrame:MMPageFrame(NO)];
-    self.view.backgroundColor=[SpotTheme bg];
+    self.view.backgroundColor=[SpotTheme pageBackground];
     _W=self.view.bounds.size.width;
 
-    UILabel*t=[[UILabel alloc] initWithFrame:CGRectMake(16,10,_W-32,30)];
-    t.autoresizingMask=UIViewAutoresizingFlexibleWidth; t.text=L(@"Browse all"); t.font=[UIFont boldSystemFontOfSize:22]; t.textColor=[SpotTheme ink]; [self.view addSubview:t];
+    [self.view addSubview:[MMNativeUI navigationBarWithTitle:L(@"Browse") width:_W]];
 
-    _sc=[[UIScrollView alloc] initWithFrame:CGRectMake(0,46,_W,self.view.bounds.size.height-46)];
+    _sc=[[UIScrollView alloc] initWithFrame:CGRectMake(0,44,_W,self.view.bounds.size.height-44)];
     _sc.contentInset=UIEdgeInsetsMake(8,0,MMPageBottomInset(84),0); _sc.alwaysBounceVertical=YES;   // Platz für Now-Playing + Download-Leiste
     _sc.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight; [self.view addSubview:_sc];
 
@@ -57,10 +58,11 @@
         CGFloat col=i%cols, rowY=(i/cols)*(tileH+gap);
         UIView*tile=[[UIView alloc] initWithFrame:CGRectMake(16+col*(tileW+gap),rowY,tileW,tileH)];
         tile.backgroundColor=[UIColor colorWithRed:[c[0] floatValue] green:[c[1] floatValue] blue:[c[2] floatValue] alpha:1];
-        tile.layer.cornerRadius=6; tile.clipsToBounds=YES; tile.tag=1000+i;
+        tile.clipsToBounds=YES; tile.tag=1000+i;
         UILabel*nm=[[UILabel alloc] initWithFrame:CGRectMake(12,8,tileW-24,tileH-16)];
         nm.text=cat[@"name"]; nm.numberOfLines=2; nm.font=[UIFont boldSystemFontOfSize:16]; nm.textColor=[UIColor whiteColor]; [tile addSubview:nm];
         UIButton*tap=[UIButton buttonWithType:UIButtonTypeCustom]; tap.frame=tile.bounds; tap.tag=i; [tap addTarget:self action:@selector(open:) forControlEvents:UIControlEventTouchUpInside]; [tile addSubview:tap];
+        [OJTheme applyStrongGlossToView:tile cornerRadius:2.5];
         [_sc addSubview:tile];
     }
     int rows=((int)_cats.count+(int)cols-1)/(int)cols; _sc.contentSize=CGSizeMake(_W,rows*(tileH+gap)+10);

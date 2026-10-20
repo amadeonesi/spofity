@@ -1,10 +1,15 @@
-Spotify6
+Spofity
 Copyright (C) kiwy and contributors.
 Licensed under the GNU General Public License v3.0 (see LICENSE).
 
-This project is a fork of riff by Second Track
+Developer: onionjumoke / amadeonesi
+
+Based on Spotify6 by iKiWI.
+Spotify6 in turn began as a fork of riff by Second Track
   https://github.com/SecondTrack/riff (GNU General Public License v3.0)
 riff provided the Spotify protocol implementation, playback and the original user interface.
+
+Honorable thanks to DeepSeek 4.1 Flash.
 
 Third-party components
 ----------------------
@@ -20,6 +25,10 @@ Mbed TLS 3.6.7 (downloaded and built by vendor/mbedtls/fetch.sh and build.sh; no
 Shannon stream cipher (music/Spot/shannon.c)
   C port of rust-shannon from the librespot project, MIT License.
   https://github.com/librespot-org/librespot
+
+Lucide icons (Resources/lucide-*.png)
+  Tab bar and queue icons from Lucide, ISC License.
+  https://lucide.dev
 
 Material Icons "music_note" (path used in tools/make_icon.py for the app icon)
   Google, Apache License 2.0.

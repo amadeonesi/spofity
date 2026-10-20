@@ -1,5 +1,7 @@
 #import "MMQueueController.h"
 #import "SpotTheme.h"
+#import "OJTheme.h"
+#import "MMNativeUI.h"
 #import "MMLayout.h"
 #import "MMRootController.h"
 #import "MMCovers.h"
@@ -63,16 +65,14 @@ static UIImage* gripIcon(void){
 - (BOOL)shouldAutorotateToInterfaceOrientation:(UIInterfaceOrientation)o { return MMShouldAutorotate(o); }
 - (void)loadView {
     self.view=[[UIView alloc] initWithFrame:[UIScreen mainScreen].applicationFrame];
-    self.view.backgroundColor=[SpotTheme bg];
+    self.view.backgroundColor=[SpotTheme pageBackground];
     CGFloat W=self.view.bounds.size.width, H=self.view.bounds.size.height;
-    UIButton*done=[UIButton buttonWithType:UIButtonTypeCustom]; done.frame=CGRectMake(W-78,8,70,34);
-    [done setTitle:L(@"Done") forState:UIControlStateNormal]; [done setTitleColor:[SpotTheme green] forState:UIControlStateNormal];
-    done.titleLabel.font=[UIFont boldSystemFontOfSize:15]; done.contentHorizontalAlignment=UIControlContentHorizontalAlignmentRight;
-    [done addTarget:self action:@selector(close) forControlEvents:UIControlEventTouchUpInside]; [self.view addSubview:done];
-    UILabel*nav=[[UILabel alloc] initWithFrame:CGRectMake(80,8,W-160,34)]; nav.text=L(@"Queue"); nav.font=[UIFont boldSystemFontOfSize:16];
-    nav.textColor=[SpotTheme ink]; nav.textAlignment=NSTextAlignmentCenter; [self.view addSubview:nav];
-    _table=[[UITableView alloc] initWithFrame:CGRectMake(0,46,W,H-46) style:UITableViewStylePlain];
-    _table.backgroundColor=[SpotTheme bg]; _table.separatorStyle=UITableViewCellSeparatorStyleNone; _table.rowHeight=52;
+    UINavigationBar *navBar=[MMNativeUI navigationBarWithTitle:L(@"Queue") width:W];
+    navBar.topItem.rightBarButtonItem=[MMNativeUI doneItemTarget:self action:@selector(close)];
+    [self.view addSubview:navBar];
+    _table=[[UITableView alloc] initWithFrame:CGRectMake(0,44,W,H-44) style:UITableViewStyleGrouped];
+    [OJTheme applyToGroupedTableView:_table];
+    _table.backgroundColor=[UIColor clearColor]; _table.separatorStyle=UITableViewCellSeparatorStyleSingleLine; _table.rowHeight=52;
     _table.dataSource=self; _table.delegate=self; [self.view addSubview:_table];
     _table.editing=YES; _table.allowsSelectionDuringEditing=YES;   // Ziehgriff rechts an eingereihten und kommenden Titeln
     __weak MMQueueController*ws=self;
@@ -101,7 +101,7 @@ static UIImage* gripIcon(void){
 - (CGFloat)tableView:(UITableView *)tv heightForHeaderInSection:(NSInteger)s { return (s==2 || [self tableView:tv numberOfRowsInSection:s])?40:0; }   // "Als Nächstes" immer (Symbol); Warteschlange nur, wenn etwas drin ist
 - (UIView *)tableView:(UITableView *)tv viewForHeaderInSection:(NSInteger)s {
     CGFloat W=tv.bounds.size.width; MMRootController*r=[MMRootController shared];
-    UIView*v=[[UIView alloc] initWithFrame:CGRectMake(0,0,W,40)]; v.backgroundColor=[SpotTheme bg];
+    UIView*v=[[UIView alloc] initWithFrame:CGRectMake(0,0,W,40)]; v.backgroundColor=[UIColor clearColor];
     UILabel*l=[[UILabel alloc] initWithFrame:CGRectMake(16,10,W-120,24)];
     l.text=s==0?L(@"Now playing"):s==1?L(@"Next in queue"):L(@"Next up");
     l.font=[UIFont boldSystemFontOfSize:17]; l.textColor=[SpotTheme ink]; l.backgroundColor=[UIColor clearColor]; [v addSubview:l];
@@ -122,8 +122,8 @@ static UIImage* gripIcon(void){
 - (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
     CGFloat W=tv.bounds.size.width;
     UITableViewCell*c=[tv dequeueReusableCellWithIdentifier:MMCellID(@"r",tv)];
-    if(!c){ c=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:MMCellID(@"r",tv)]; c.backgroundColor=[SpotTheme bg]; c.selectionStyle=UITableViewCellSelectionStyleNone;
-        UIImageView*cov=[[UIImageView alloc] initWithFrame:CGRectMake(16,7,38,38)]; cov.tag=1; cov.backgroundColor=[SpotTheme card]; cov.layer.cornerRadius=4; cov.clipsToBounds=YES; cov.contentMode=UIViewContentModeScaleAspectFill; [c.contentView addSubview:cov];
+    if(!c){ c=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:MMCellID(@"r",tv)]; c.backgroundColor=[SpotTheme card]; c.selectionStyle=UITableViewCellSelectionStyleNone;
+        UIImageView*cov=[[UIImageView alloc] initWithFrame:CGRectMake(6,7,38,38)]; cov.tag=1; cov.backgroundColor=[SpotTheme card]; cov.clipsToBounds=YES; cov.contentMode=UIViewContentModeScaleAspectFill; [c.contentView addSubview:cov];
         UILabel*ti=[[UILabel alloc] initWithFrame:CGRectMake(66,8,W-82,19)]; ti.tag=2; ti.font=[UIFont boldSystemFontOfSize:15]; ti.autoresizingMask=UIViewAutoresizingFlexibleWidth; [c.contentView addSubview:ti];
         UILabel*ar=[[UILabel alloc] initWithFrame:CGRectMake(66,27,W-82,17)]; ar.tag=3; ar.font=[SpotTheme sub]; ar.textColor=[SpotTheme muted]; ar.autoresizingMask=UIViewAutoresizingFlexibleWidth; [c.contentView addSubview:ar]; }
     NSDictionary*t=[self trackAt:ip];

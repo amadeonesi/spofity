@@ -141,9 +141,9 @@ static void timeCells(Class cls){
     static NSMutableSet*done; if(!done) done=[NSMutableSet set]; if([done containsObject:cls]) return; [done addObject:cls];
     SEL sel=@selector(tableView:cellForRowAtIndexPath:); Method m=class_getInstanceMethod(cls,sel); if(!m) return;
     IMP orig=method_getImplementation(m);
-    method_setImplementation(m, imp_implementationWithBlock(^id(id me, UITableView*tv, NSIndexPath*ip){
+    method_setImplementation(m, imp_implementationWithBlock((__bridge void *)(^id(id me, UITableView*tv, NSIndexPath*ip){
         CFAbsoluteTime t0=CFAbsoluteTimeGetCurrent(); id c=((id(*)(id,SEL,UITableView*,NSIndexPath*))orig)(me,sel,tv,ip);
-        double dt=CFAbsoluteTimeGetCurrent()-t0; gCellSum+=dt; gCellN++; if(dt>gCellMax) gCellMax=dt; return c; }));
+        double dt=CFAbsoluteTimeGetCurrent()-t0; gCellSum+=dt; gCellN++; if(dt>gCellMax) gCellMax=dt; return c; })));
 }
 
 // layout: Rahmen der Ansichten (Klasse, frame, tag, Drehung) zum Prüfen der iPad-/iPhone-Anordnung ohne Screenshot
@@ -304,8 +304,8 @@ static void run(NSString*line){
     // Test 4-Zoll: liegt Library/Riff/.tall, meldet der Bildschirm 320x568 -> alle Seiten bauen sich wie auf einem iPod touch 5 auf
     // ("shot" speichert dann das ganze 568er-Fenster; auf dem 3GS selbst ist unten etwas abgeschnitten)
     if([[NSFileManager defaultManager] fileExistsAtPath:MMPath(@".tall")]){
-        method_setImplementation(class_getInstanceMethod([UIScreen class],@selector(bounds)), imp_implementationWithBlock(^CGRect(id s){ return CGRectMake(0,0,320,568); }));
-        method_setImplementation(class_getInstanceMethod([UIScreen class],@selector(applicationFrame)), imp_implementationWithBlock(^CGRect(id s){ return CGRectMake(0,20,320,548); }));
+        method_setImplementation(class_getInstanceMethod([UIScreen class],@selector(bounds)), imp_implementationWithBlock((__bridge void *)(^CGRect(id s){ return CGRectMake(0,0,320,568); })));
+        method_setImplementation(class_getInstanceMethod([UIScreen class],@selector(applicationFrame)), imp_implementationWithBlock((__bridge void *)(^CGRect(id s){ return CGRectMake(0,20,320,548); })));
     }
     dispatch_async(dispatch_get_main_queue(), ^{
         [NSTimer scheduledTimerWithTimeInterval:1.0 target:self selector:@selector(poll) userInfo:nil repeats:YES];

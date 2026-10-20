@@ -2,6 +2,8 @@
 #import "MMRootController.h"
 #import "MMLoginController.h"
 #import "MMSpotify.h"
+#import "SpotTheme.h"
+#import "OJTheme.h"
 
 @interface MMAppDelegate : UIResponder <UIApplicationDelegate>
 @property (nonatomic, strong) UIWindow *window;
@@ -10,7 +12,22 @@
 @implementation MMAppDelegate
 
 - (BOOL)application:(UIApplication *)application didFinishLaunchingWithOptions:(NSDictionary *)opts {
+    [[NSUserDefaults standardUserDefaults] registerDefaults:
+        @{@"OJThemeAccent": @(OJThemeAccentGreen), @"OJThemeDarkMode": @1}];
+    if (![[NSUserDefaults standardUserDefaults] boolForKey:@"OJThemeDefaultApplied"]) {
+        [[NSUserDefaults standardUserDefaults] setBool:YES forKey:@"OJThemeDarkMode"];
+        [[NSUserDefaults standardUserDefaults] setBool:YES forKey:@"OJThemeDefaultApplied"];
+        [[NSUserDefaults standardUserDefaults] synchronize];
+    }
+    if (![[NSUserDefaults standardUserDefaults] boolForKey:@"OJThemeAccentDefaultApplied"]) {
+        [[NSUserDefaults standardUserDefaults] setInteger:OJThemeAccentGreen forKey:@"OJThemeAccent"];
+        [[NSUserDefaults standardUserDefaults] setBool:YES forKey:@"OJThemeAccentDefaultApplied"];
+        [[NSUserDefaults standardUserDefaults] synchronize];
+    }
+    [OJTheme apply];
+    [[UIApplication sharedApplication] setStatusBarStyle:([OJTheme darkMode]?UIStatusBarStyleBlackOpaque:UIStatusBarStyleDefault) animated:NO];
     self.window = [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
+    self.window.backgroundColor = [SpotTheme pageBackground];
     if ([MMSpotify hasStoredCreds]) {
         // Schon gekoppelt: sofort in die App (kein kurzes Aufblitzen des Login-Bildschirms).
         // Die Anmeldung läuft unsichtbar im Hintergrund; ohne Netz verbindet sie sich später selbst neu.

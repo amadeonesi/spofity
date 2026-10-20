@@ -3,7 +3,7 @@
 #import <Foundation/Foundation.h>
 
 // Alle Daten (Login, Tokens, Downloads, Cache) liegen im App-Container unter Library/Riff:
-// Spotify6 ist eine Nutzer-App (IPA) in der Sandbox, /var/mobile ist dort nicht beschreibbar.
+// Spofity ist eine Nutzer-App (IPA) in der Sandbox, /var/mobile ist dort nicht beschreibbar.
 NSString *MMDataDir(void);              // <Container>/Library/Riff (wird angelegt)
 NSString *MMPath(NSString *relative);   // <Container>/Library/Riff/<relative>
 void MMLog(NSString *fmt, ...) NS_FORMAT_FUNCTION(1,2);   // ins App-Log (Library/Riff/.spotify-log)

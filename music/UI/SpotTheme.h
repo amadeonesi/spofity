@@ -9,6 +9,9 @@
 + (UIColor *)muted;     // b3b3b3
 + (UIColor *)faint;     // 727272
 + (UIColor *)line;      // 2a2a2a
++ (UIColor *)pageBackground;   // dark linen texture for page backgrounds
++ (UIColor *)barBackground;    // vertical gloss gradient for bars
++ (UIColor *)barBackgroundForHeight:(CGFloat)height;
 + (UIFont *)h1;         // 22 bold
 + (UIFont *)h2;         // 17 semibold
 + (UIFont *)body;       // 15

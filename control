@@ -1,9 +1,9 @@
-Package: io.github.ikiwy.spotify6
-Name: Spotify6
+Package: com.onionjumoke.spofity
+Name: Spofity
 Version: 1.2.1
 Architecture: iphoneos-arm
 Description: Spotify player for iOS 5 and 6, iPhone, iPod and iPad
-Maintainer: kiwy
-Author: kiwy
+Maintainer: onionjumoke
+Author: onionjumoke / amadeonesi
 Section: Multimedia
 Depends: firmware (>= 5.0)

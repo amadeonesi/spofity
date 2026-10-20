@@ -1,5 +1,7 @@
 #import "MMTrackListController.h"
 #import "SpotTheme.h"
+#import "OJTheme.h"
+#import "MMNativeUI.h"
 #import "MMLayout.h"
 #import "MMArtistController.h"
 #import <objc/runtime.h>
@@ -20,6 +22,7 @@ static char kRowKey;   // Zeilennummer am Artist-Label (Album-Seite)
     NSMutableArray *_tracks;   // @[ {id,title,artist,cover} ] - wächst beim Scrollen
     NSCache *_imgCache;
     UIButton *_offBtn; UIActivityIndicatorView *_offSpin; UIColor *_grn;   // Offline-Knopf oben rechts
+    UINavigationBar *_navBar;
     NSString *_nextPath;       // relativer Pfad der nächsten Seite (nil = fertig)
     BOOL _loadingPage, _firstDone;
     BOOL _showingCache;        // gerade wird die gespeicherte Liste gezeigt, erste frische Seite steht noch aus
@@ -45,34 +48,32 @@ static char kRowKey;   // Zeilennummer am Artist-Label (Album-Seite)
 
 - (void)loadView {
     self.view=[[UIView alloc] initWithFrame:MMPageFrame(YES)];
-    self.view.backgroundColor=[SpotTheme bg];
+    self.view.backgroundColor=[SpotTheme pageBackground];
     CGFloat W=self.view.bounds.size.width, H=self.view.bounds.size.height;
 
-    UIButton*back=[UIButton buttonWithType:UIButtonTypeCustom]; back.frame=CGRectMake(8,8,80,34);
-    [SpotTheme styleBackButton:back]; [back setTitleColor:[SpotTheme ink] forState:UIControlStateNormal];
-    back.titleLabel.font=[UIFont systemFontOfSize:14]; back.contentHorizontalAlignment=UIControlContentHorizontalAlignmentLeft;
-    [back addTarget:self action:@selector(close) forControlEvents:UIControlEventTouchUpInside]; [self.view addSubview:back];
-
-    UILabel*nav=[[UILabel alloc] initWithFrame:CGRectMake(70,8,W-140,34)];
-    nav.text=_title; nav.font=[UIFont boldSystemFontOfSize:16]; nav.textColor=[SpotTheme ink]; nav.textAlignment=NSTextAlignmentCenter; nav.adjustsFontSizeToFitWidth=YES; [self.view addSubview:nav];
+    UINavigationBar *navBar=[MMNativeUI navigationBarWithTitle:_title width:W]; _navBar=navBar;
+    navBar.topItem.leftBarButtonItem=[MMNativeUI backItemTarget:self action:@selector(close)];
+    [self.view addSubview:navBar];
 
     // --- Offline-Knopf oben rechts (gegenüber von Zurück); fragt vor dem Speichern und vor dem Entfernen nach ---
     _grn=[UIColor colorWithRed:0.11 green:0.73 blue:0.33 alpha:1];
-    _offBtn=[UIButton buttonWithType:UIButtonTypeCustom]; _offBtn.frame=CGRectMake(W-52,8,44,34);
-    _offBtn.hidden=YES; [self.view addSubview:_offBtn];
+    _offBtn=[UIButton buttonWithType:UIButtonTypeCustom]; _offBtn.frame=CGRectMake(0,0,44,34);
+    _offBtn.hidden=YES;
     if([self isDownloads]){ [_offBtn setImage:shuffleIcon() forState:UIControlStateNormal]; [_offBtn addTarget:self action:@selector(shufflePlay) forControlEvents:UIControlEventTouchUpInside]; }   // "Heruntergeladen": Zufallswiedergabe statt Download
     else [_offBtn addTarget:self action:@selector(toggleDownload) forControlEvents:UIControlEventTouchUpInside];
+    navBar.topItem.rightBarButtonItem=[[UIBarButtonItem alloc] initWithCustomView:_offBtn];
     _offSpin=[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleWhite];
-    _offSpin.center=_offBtn.center; _offSpin.hidesWhenStopped=YES; [self.view addSubview:_offSpin];
+    _offSpin.frame=CGRectMake(W-46,5,36,34); _offSpin.hidesWhenStopped=YES; [navBar addSubview:_offSpin];
 
-    _table=[[UITableView alloc] initWithFrame:CGRectMake(0,46,W,H-46) style:UITableViewStylePlain];
-    _table.backgroundColor=[SpotTheme bg]; _table.separatorStyle=UITableViewCellSeparatorStyleNone;
+    _table=[[UITableView alloc] initWithFrame:CGRectMake(0,44,W,H-44) style:UITableViewStyleGrouped];
+    [OJTheme applyToGroupedTableView:_table];
+    _table.backgroundColor=[UIColor clearColor]; _table.separatorStyle=UITableViewCellSeparatorStyleSingleLine;
     _table.dataSource=self; _table.delegate=self; _table.rowHeight=MMTrackRowH; _table.contentInset=UIEdgeInsetsMake(0,0,MMPageBottomInset(90),0);
     _table.autoresizingMask=UIViewAutoresizingFlexibleHeight|UIViewAutoresizingFlexibleWidth; [self.view addSubview:_table];
 
     if(_coverStyle) [self buildHeader];
     _hint=[[UILabel alloc] initWithFrame:CGRectMake(20,_coverStyle?190:110,W-40,40)]; _hint.textColor=[SpotTheme faint]; _hint.font=[SpotTheme sub]; _hint.textAlignment=NSTextAlignmentCenter; [self.view addSubview:_hint];
-    _spin=[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleWhite];
+    _spin=[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleGray];
     _spin.center=CGPointMake(W/2,_coverStyle?210:90); _spin.hidesWhenStopped=YES; [_spin startAnimating]; [self.view addSubview:_spin];
 
     __weak MMTrackListController*ws=self;   // lange drücken: Als Nächstes / Warteschlange / Lieblingssongs / Playlist
@@ -264,7 +265,7 @@ static NSString* fmtDuration(long long ms){
 }
 // Zufallswiedergabe: zwei gekreuzte Pfeile (wie im Player), grün
 static UIImage* shuffleIcon(void){
-    CGFloat B=26, sz=20, o=3; UIGraphicsBeginImageContextWithOptions(CGSizeMake(B,B),NO,0); [[SpotTheme green] setStroke];
+    CGFloat B=26, sz=20, o=3; UIGraphicsBeginImageContextWithOptions(CGSizeMake(B,B),NO,0); [[UIColor whiteColor] setStroke];
     UIBezierPath*p=[UIBezierPath bezierPath]; p.lineWidth=2; p.lineCapStyle=kCGLineCapRound; p.lineJoinStyle=kCGLineJoinRound;
     #define P(x,y) CGPointMake(o+sz*(x),o+sz*(y))
     [p moveToPoint:P(0.05,0.25)]; [p addCurveToPoint:P(0.9,0.75) controlPoint1:P(0.5,0.25) controlPoint2:P(0.45,0.75)];
@@ -279,7 +280,7 @@ static UIImage* offIcon(BOOL have, UIColor*grn){
     if(have) return [SpotTheme downloadedIcon:26];   // gleiches Zeichen wie in den Zeilen
     UIGraphicsBeginImageContextWithOptions(CGSizeMake(26,26),NO,0);
     UIBezierPath*p=[UIBezierPath bezierPath]; p.lineWidth=2; p.lineCapStyle=kCGLineCapRound; p.lineJoinStyle=kCGLineJoinRound;
-    { [[SpotTheme ink] setStroke]; UIBezierPath*c=[UIBezierPath bezierPathWithOvalInRect:CGRectMake(2,2,22,22)]; c.lineWidth=1.5; [c stroke];
+    { [[UIColor whiteColor] setStroke]; UIBezierPath*c=[UIBezierPath bezierPathWithOvalInRect:CGRectMake(2,2,22,22)]; c.lineWidth=1.5; [c stroke];
         [p moveToPoint:CGPointMake(13,7.5)]; [p addLineToPoint:CGPointMake(13,18)]; [p moveToPoint:CGPointMake(8.5,13.5)]; [p addLineToPoint:CGPointMake(13,18)]; [p addLineToPoint:CGPointMake(17.5,13.5)]; [p stroke]; }
     UIImage*img=UIGraphicsGetImageFromCurrentImageContext(); UIGraphicsEndImageContext(); return img;
 }
@@ -358,13 +359,13 @@ enum { kAlertRemove=1, kAlertSave=2 };
     CGFloat timeX=W-32-8-48, albumX=floor(W*0.55), textR=cols?(albumCol?albumX-12:timeX-12):W-40;
     UITableViewCell*c=[tv dequeueReusableCellWithIdentifier:MMCellID(@"r",tv)];
     if(!c){ c=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:MMCellID(@"r",tv)];
-        c.backgroundColor=[SpotTheme bg]; c.selectionStyle=UITableViewCellSelectionStyleNone;
+        c.backgroundColor=[SpotTheme card]; c.selectionStyle=UITableViewCellSelectionStyleNone;
         // Cover-Ansicht: Nummer vorn; Alben ohne Cover (alle gleich), Playlists mit kleinem Cover zwischen Nummer und Titel
         BOOL num=_coverStyle, cover=!_coverStyle || !albumPage;
         CGFloat tx=num?(cover?84:40):70;
         if(num){ UILabel*no=[[UILabel alloc] initWithFrame:CGRectMake(4,0,30,RH)]; no.tag=5; no.font=[UIFont systemFontOfSize:15]; no.textColor=[SpotTheme muted];
             no.textAlignment=NSTextAlignmentCenter; no.adjustsFontSizeToFitWidth=YES; [c.contentView addSubview:no]; }
-        if(cover){ UIImageView*cov=[[UIImageView alloc] initWithFrame:num?CGRectMake(36,8,40,40):CGRectMake(16,6,44,44)]; cov.tag=1; cov.backgroundColor=[SpotTheme card]; cov.layer.cornerRadius=4; cov.clipsToBounds=YES; cov.contentMode=UIViewContentModeScaleAspectFill; [c.contentView addSubview:cov]; }
+        if(cover){ UIImageView*cov=[[UIImageView alloc] initWithFrame:num?CGRectMake(36,8,40,40):CGRectMake(6,6,44,44)]; cov.tag=1; cov.backgroundColor=[SpotTheme card]; cov.clipsToBounds=YES; cov.contentMode=UIViewContentModeScaleAspectFill; [c.contentView addSubview:cov]; }
         UILabel*ti=[[UILabel alloc] initWithFrame:CGRectMake(tx,9,textR-tx,20)]; ti.tag=2; ti.font=[UIFont boldSystemFontOfSize:15]; ti.textColor=[SpotTheme ink]; [c.contentView addSubview:ti];
         UILabel*ar=[[UILabel alloc] initWithFrame:CGRectMake(tx,29,textR-tx,18)]; ar.tag=3; ar.font=[SpotTheme sub]; ar.textColor=[SpotTheme muted]; [c.contentView addSubview:ar];
         if(albumPage){ ar.userInteractionEnabled=YES; [ar addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(rowArtistTap:)]]; }
@@ -408,7 +409,8 @@ enum { kAlertRemove=1, kAlertSave=2 };
     NSDictionary*t=_tracks[ip.row]; NSArray*list=[self playableTracks]; NSUInteger i=[list indexOfObject:t];
     if(i==NSNotFound) return;   // offline und nicht gespeichert: grau, spielt nicht
     [[MMRootController shared] playList:list index:(NSInteger)i context:[self context]];
-    if(!MMIsPad()) [[MMRootController shared] openPlayer];   // iPad: nur abspielen, die Leiste unten zeigt den Titel   // Player als Vollbild; Titelliste bleibt darunter im Inhaltsbereich
+    if(!MMIsPad()) dispatch_async(dispatch_get_main_queue(), ^{ [[MMRootController shared] openPlayer]; });   // let the tap/selection finish first
+    // iPad: nur abspielen, die Leiste unten zeigt den Titel; Player als Vollbild, Titelliste bleibt darunter
 }
 // Herkunft für den Verlauf: Lieblingssongs, Playlist oder Album (Cover = Albumcover des ersten Titels)
 - (NSDictionary *)context {

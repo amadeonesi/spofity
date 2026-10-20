@@ -1,8 +1,8 @@
-Package: io.github.ikiwy.spotify6widget
-Name: Spotify6 Widget
+Package: com.onionjumoke.spofitywidget
+Name: Spofity Widget
 Version: 1.2
 Architecture: iphoneos-arm
-Description: Now playing widget for Spotify6 in Notification Center (iOS 5 and 6; not on iPads with iOS 5)
-Maintainer: kiwy
-Author: kiwy
+Description: Now playing widget for Spofity in Notification Center (iOS 5 and 6; not on iPads with iOS 5)
+Maintainer: onionjumoke
+Author: onionjumoke / amadeonesi
 Section: Widgets

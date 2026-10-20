@@ -1,51 +1,33 @@
-<p align="center"><img src="Resources/Icon@2x.png" width="96" alt="Spotify6 icon"></p>
+<p align="center"><img src="docs/spofity.png" width="96" style="border-radius:20px" alt="Spofity icon"></p>
 
-<h1 align="center">Spotify6</h1>
+<h1 align="center">spofity</h1>
 
-<p align="center"><b>Spotify, back on iOS 5 and 6.</b><br>A native standalone Spotify client for jailbroken iOS 5 and 6, on iPhone, iPod touch and iPad.</p>
+<p align="center"><b>spotify, on iOS 5 and 6.</b><br>A native standalone Spotify client for jailbroken iOS 5 and 6, on iPhone, iPod touch and iPad. Now with a skeuomorphic look.</p>
 
 ---
+spofity is a fork of Spotify6, the original client project, which uses a more modern UI. spofity, on the other hand, has a more native, skeuomorphic look. Its usability is exactly the same. Nothing else changes.
 
-Spotify6 puts your whole Spotify account on iOS 5 and 6: your playlists, your queue and your offline music. It runs entirely on the phone and works with your existing account.
+spofity puts your whole Spotify account on iOS 5 and 6: your playlists, your queue and your offline music. It runs entirely on the phone and works with your existing account.
 
-Spotify6 is based on [riff](https://github.com/SecondTrack/riff) by Second Track, which provides the Spotify connection and audio playback underneath. Big thanks to them for making it open source.
+spofity is based on [Spotify6](https://github.com/iKiWY/Spotify6) by iKiWI, which provides the original client. Big thanks to them for making it open source.
 
 <table align="center">
   <tr>
     <td align="center" valign="top"><b>Home</b><br><img src="docs/screenshots/home.png" width="190" alt="Home"></td>
     <td align="center" valign="top"><b>Now playing</b><br><img src="docs/screenshots/player.png" width="190" alt="Now playing"></td>
-    <td align="center" valign="top"><b>Queue</b><br><img src="docs/screenshots/queue.png" width="190" alt="Queue"></td>
-    <td align="center" valign="top"><b>Album</b><br><img src="docs/screenshots/album.png" width="190" alt="Album"></td>
+    <td align="center" valign="top"><b>Queue</b><br><img src="docs/screenshots/queue.png" width="190" alt="Search"></td>
+    <td align="center" valign="top"><b>Album</b><br><img src="docs/screenshots/playlist.png" width="190" alt="Playlist"></td>
   </tr>
   <tr>
-    <td align="center" valign="top"><b>Song menu</b><br><img src="docs/screenshots/menu.png" width="190" alt="Song menu"></td>
-    <td align="center" valign="top"><b>Search</b><br><img src="docs/screenshots/search.png" width="190" alt="Search"></td>
-    <td align="center" valign="top"><b>Artist</b><br><img src="docs/screenshots/artist.png" width="190" alt="Artist"></td>
-    <td align="center" valign="top"><b>Notification Center</b><br><img src="docs/screenshots/widget.png" width="190" alt="Notification Center"></td>
-  </tr>
-</table>
-
-### On iPad
-
-Spotify6 is a universal app. On the iPad it has its own layout with a sidebar, a player bar along the bottom and a full-screen player, and it works in both portrait and landscape.
-
-<table align="center">
-  <tr>
-    <td align="center" valign="top"><b>Home (portrait)</b><br><img src="docs/screenshots/ipad-home-portrait.png" width="300" alt="iPad Home, portrait"></td>
-    <td align="center" valign="top"><b>Home (landscape)</b><br><img src="docs/screenshots/ipad-home-landscape.png" width="400" alt="iPad Home, landscape"></td>
-  </tr>
-  <tr>
-    <td align="center" valign="top"><b>Now playing (portrait)</b><br><img src="docs/screenshots/ipad-player-portrait.png" width="300" alt="iPad Now playing, portrait"></td>
-    <td align="center" valign="top"><b>Now playing with queue (landscape)</b><br><img src="docs/screenshots/ipad-player-queue-landscape.png" width="400" alt="iPad Now playing with the queue open, landscape"></td>
-  </tr>
-  <tr>
-    <td align="center" valign="top"><b>Playlist (landscape)</b><br><img src="docs/screenshots/ipad-playlist-landscape.png" width="400" alt="iPad Playlist, landscape"></td>
-    <td align="center" valign="top"><b>Album (landscape)</b><br><img src="docs/screenshots/ipad-album-landscape.png" width="400" alt="iPad Album, landscape"></td>
+    <td align="center" valign="top"><b>Home</b><br><img src="docs/screenshots/home-white.png" width="190" alt="Home (light mode)"></td>
+        <td align="center" valign="top"><b>Queue</b><br><img src="docs/screenshots/search-white.png" width="190" alt="Search (light mode)"></td>
+    <td align="center" valign="top"><b>Album</b><br><img src="docs/screenshots/playlist-white.png" width="190" alt="Playlist (light mode)"></td>
+     <td align="center" valign="top"><b>Album</b><br><img src="docs/screenshots/widget.png" width="190" alt="Notification Center"></td>
   </tr>
 </table>
 
 > [!IMPORTANT]
-> Spotify6 is an unofficial project and is **not affiliated with Spotify**. It talks to Spotify through undocumented interfaces using your own account, which may be against Spotify's Terms of Use and could stop working at any time. **Spotify Premium is required.** Use it at your own risk.
+> spofity is an unofficial project and is **not affiliated with Spotify**. It talks to Spotify through undocumented interfaces using your own account, which may be against Spotify's Terms of Use and could stop working at any time. **Spotify Premium is required.** Use it at your own risk.
 
 ## Features
 
@@ -71,48 +53,56 @@ Spotify6 is a universal app. On the iPad it has its own layout with a sidebar, a
 | | |
 |---|---|
 | Device | An armv7 iPhone, iPod touch or iPad on **iOS 5 or 6**, jailbroken, including 4-inch models (iPhone 5, iPod touch 5). Tested on an iPhone 3GS (iOS 6), and on an iPad 1 and an iPod touch 3G (iOS 5.1.1) in an emulator. |
-| Installer | **AppSync** (Spotify6 installs as a normal app) |
+| Installer | **AppSync** (Spofity installs as a normal app) |
 | Account | **Spotify Premium** |
 | Search | Your own free Spotify developer key (the app shows you how to create one in about three minutes) |
 
 ## Signing in
 
-Spotify6 **NEVER** asks for your password. On first launch it shows a short code. Enter it at **spotify.com/pair** on any other device and you are in. The login is stored only on the phone, inside the app's own folder, and renews itself.
+Spofity **NEVER** asks for your password. On first launch it shows a short code. Enter it at **spotify.com/pair** on any other device and you are in. The login is stored only on the phone, inside the app's own folder, and renews itself.
 
 ## Building
 
-Needs [Theos](https://theos.dev) with the **iPhoneOS 9.3 SDK**. The app targets iOS 5.0 (one build for iOS 5 and 6) and builds with `-Werror`.
+Needs an iOS 5 toolchain: `ios5-clang`, `arm-apple-darwin11-ld` and `iPhoneOS5.0.sdk` under `~/ios-toolchain` (no macOS or Xcode required). The app targets iOS 5.0 — one armv7 binary for iOS 5 and 6 — and builds with `-Werror`.
 
 ```sh
 # TLS library: downloads the official Mbed TLS 3.6.7 release, checks its SHA-256, builds it for armv7
 vendor/mbedtls/fetch.sh
 vendor/mbedtls/build.sh
 
-# Build the release IPA and install it over USB (ideviceinstaller + AppSync)
-scripts/install.sh
+# armv7 binary + Payload/Spofity.app + Spofity.ipa
+make ipa
+
+# Install it over USB (ideviceinstaller + AppSync)
+ideviceinstaller install Spofity.ipa
 ```
 
-A plain `gmake package` builds a debug version with an extra test hook (`music/App/MMDebug.m`) for driving the app over SSH; release builds leave it out.
+A debug build (`make ipa DEBUG=1`) enables the extra test hook in `music/App/MMDebug.m` for driving the app over SSH; release builds leave it out.
 
-**Notification Center widget** (optional, `widget/`): build it with `gmake package FINALPACKAGE=1` inside `widget/`, install the `.deb` on the device with `dpkg -i`, respring, and turn it on in iOS Settings → Notifications. It can be switched off any time in Spotify6's settings. iPads on iOS 5 can't show Notification Center widgets.
+**Notification Center widget** (optional, `widget/`): build it with `gmake package FINALPACKAGE=1` inside `widget/`, install the `.deb` on the device with `dpkg -i`, respring, and turn it on in iOS Settings → Notifications. It can be switched off any time in Spofity's settings. iPads on iOS 5 can't show Notification Center widgets.
 
 ## How it works
 
-Spotify6 signs in to a Spotify access point the way Spotify's own clients do and keeps that connection open for metadata and the keys that unlock each song. Your library comes from the same internal servers the official apps use; only search goes through the public Web API, with your own developer key.
+Spofity signs in to a Spotify access point the way Spotify's own clients do and keeps that connection open for metadata and the keys that unlock each song. Your library comes from the same internal servers the official apps use; only search goes through the public Web API, with your own developer key.
 
-Songs are fetched from Spotify's CDN in their encrypted form, decrypted on the phone and decoded from Ogg Vorbis in software. Spotify6 uses the 160 kbps version, which keeps decoding at roughly 7–9 % of the 3GS's CPU. Because iOS 5 and 6 can no longer talk to some of Spotify's servers securely, all HTTPS traffic runs through a bundled Mbed TLS with full certificate checks.
+Songs are fetched from Spotify's CDN in their encrypted form, decrypted on the phone and decoded from Ogg Vorbis in software. Spofity uses the 160 kbps version, which keeps decoding at roughly 7–9 % of the 3GS's CPU. Because iOS 5 and 6 can no longer talk to some of Spotify's servers securely, all HTTPS traffic runs through a bundled Mbed TLS with full certificate checks.
 
 The widget is a small plugin inside SpringBoard that reads what's currently playing from the system and sends the same commands as the lock screen.
 
 ## Credits
 
-Spotify6 began as a fork of **[riff](https://github.com/SecondTrack/riff) by Second Track**, which made Spotify playback on iOS 6 possible in the first place: the protocol work, the audio pipeline and the first version of the app. Thank you!
+Spofity is developed by **onionjumoke/amadeonesi**.
+
+Spofity is based on **Spotify6 by iKiWI**, which in turn began as a fork of **[riff](https://github.com/SecondTrack/riff) by Second Track**. riff made Spotify playback on iOS 6 possible in the first place: the protocol work, the audio pipeline and the first version of the app. Thank you!
 
 Also used:
 - [stb_vorbis](https://github.com/nothings/stb) by Sean Barrett: Ogg Vorbis decoding (public domain / MIT)
 - [Mbed TLS](https://github.com/Mbed-TLS/mbedtls): TLS (Apache 2.0)
 - The Shannon cipher, ported from rust-shannon in [librespot](https://github.com/librespot-org/librespot) (MIT)
 - [Material Icons](https://github.com/google/material-design-icons) "music_note" in the app icon (Apache 2.0)
+- [Lucide](https://lucide.dev) icons for the tab bar and queue buttons (ISC License)
+
+Honorable thanks to **DeepSeek 4.1 Flash**.
 
 Details are in [NOTICE](NOTICE).
 
@@ -120,4 +110,4 @@ Details are in [NOTICE](NOTICE).
 
 GNU General Public License v3.0, see [LICENSE](LICENSE).
 
-Spotify is a trademark of Spotify AB. iPhone and iOS are trademarks of Apple Inc. Spotify6 is not affiliated with or endorsed by Spotify or Apple.
+Spotify is a trademark of Spotify AB. iPhone and iOS are trademarks of Apple Inc. Spofity is not affiliated with or endorsed by Spotify or Apple.

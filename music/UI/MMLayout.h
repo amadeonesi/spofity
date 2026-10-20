@@ -32,3 +32,4 @@ NSUInteger MMSupportedOrientations(void);             // iOS 6
 
 // Tab-/Seitenleisten-Symbole (schlichte Linien wie Spotify): home, browse, search, library
 UIImage *MMTabIcon(NSString *name, UIColor *c, CGFloat s);
+UIImage *MMTintedIcon(NSString *name, UIColor *color);   // Lucide line icon, tinted (for tab/queue buttons)

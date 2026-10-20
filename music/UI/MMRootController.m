@@ -1,5 +1,6 @@
 #import "MMRootController.h"
 #import "SpotTheme.h"
+#import "OJTheme.h"
 #import "MMStartController.h"
 #import "MMSearchController.h"
 #import "MMBrowseController.h"
@@ -24,6 +25,15 @@
 
 static MMRootController *gRoot;
 
+static UIColor *AverageColorOfImage(UIImage *img) {
+    if (!img.CGImage) return nil;
+    unsigned char px[4] = {0,0,0,255};
+    CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+    CGContextRef ctx = CGBitmapContextCreate(px,1,1,8,4,cs,kCGImageAlphaPremultipliedLast);
+    if (ctx) { CGContextDrawImage(ctx, CGRectMake(0,0,1,1), img.CGImage); CGContextRelease(ctx); }
+    CGColorSpaceRelease(cs);
+    return [UIColor colorWithRed:px[0]/255.0 green:px[1]/255.0 blue:px[2]/255.0 alpha:1];
+}
 @interface MMRootController () <AVAudioSessionDelegate>   // iOS 5: Unterbrechungen kommen über den Session-Delegate
 @end
 
@@ -53,6 +63,7 @@ static MMRootController *gRoot;
     CGFloat _tabH, _npH;
     MMPadSidebar *_sidebar; MMPadPlayerBar *_padBar;   // iPad: Seitenleiste + Player-Leiste (statt Tab- und Now-Playing-Leiste)
     BOOL _loading;                                     // Titel lädt (Kreisel statt Play)
+    BOOL _themeDirty;                                  // Theme geändert -> Tab-Controller beim Zurückkehren neu aufbauen
     MMQueueController *_queueDock; UIView *_queueEdge;
     UIView *_npLoad;                                   // iPhone: grüne Ladelinie oben an der Now-Playing-Leiste  // iPad quer: Warteschlange als Spalte rechts (Inhalt wird schmaler)
 }
@@ -152,10 +163,10 @@ MM_IOS6_END
     [self popContentImmediate]; [self pushContent:vc]; [_sidebar setSelectedKey:key];
 }
 
-// Abmelden: alles vom Konto löschen und Spotify6 beenden. Beenden ist Absicht: so bleibt garantiert nichts vom alten
+// Abmelden: alles vom Konto löschen und Spofity beenden. Beenden ist Absicht: so bleibt garantiert nichts vom alten
 // Konto im Speicher (Cover, Listen, Warteschlange); beim nächsten Öffnen kommt die Anmeldung.
 + (void)confirmLogout {
-    [MMSheet showIn:gRoot.view title:L(@"Log out?") subtitle:L(@"Removes your Spotify login, all downloads, playlists and settings from this iPhone. Spotify6 closes afterwards.")
+    [MMSheet showIn:gRoot.view title:L(@"Log out?") subtitle:L(@"Removes your Spotify login, all downloads, playlists and settings from this iPhone. Spofity closes afterwards.")
             options:@[L(@"Log out and delete data")] done:^(NSInteger i){
         if(i!=0) return;
         // Sofort sichtbar: abgedunkelt, Kreisel, Text; alles darunter nicht mehr bedienbar
@@ -200,14 +211,12 @@ MM_IOS6_END
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(streamFailed) name:@"MMAudioStreamFailed" object:nil];
     // Auto/Bluetooth: Fernsteuer-Tasten + Unterbrechungen (sonst „streitet" es mit der Stock-Musik-App)
     [[UIApplication sharedApplication] beginReceivingRemoteControlEvents];
-    MM_IOS6_BEGIN
-    if(&AVAudioSessionInterruptionNotification) [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(audioInterruption:) name:AVAudioSessionInterruptionNotification object:nil];
-    else [AVAudioSession sharedInstance].delegate=self;   // iOS 5 (Notification gibt es erst ab 6; der Delegate ist dort veraltet)
-    MM_IOS6_END
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(audioInterruption:) name:AVAudioSessionInterruptionNotification object:nil];
+    [(AVAudioSession *)[AVAudioSession sharedInstance] setDelegate:self];   // iOS 5 path; harmless (deprecated) on iOS 6
     self.view = [[UIView alloc] initWithFrame:[UIScreen mainScreen].bounds];
-    self.view.backgroundColor = [SpotTheme bg];
+    self.view.backgroundColor=[SpotTheme pageBackground];
     CGFloat W=self.view.bounds.size.width, H=self.view.bounds.size.height;
-    _tabH=49; _npH=52; CGFloat tabH=_tabH, npH=_npH;
+    _tabH=49; _npH=48; CGFloat tabH=_tabH, npH=_npH;
 
     _content = [[UIView alloc] initWithFrame:CGRectMake(0,MMStatusH,W,H-tabH-MMStatusH)];
     [self.view addSubview:_content];
@@ -220,26 +229,24 @@ MM_IOS6_END
 
     if(!MMIsPad()){   // iPhone: Now-Playing-Leiste (iPad: Player-Leiste, siehe buildPadShell)
     // Now-Playing-Leiste
-    _npBar=[[UIView alloc] initWithFrame:CGRectMake(0,H-tabH-npH,W,npH)];
-    _npBar.backgroundColor=[UIColor colorWithRed:0.14 green:0.14 blue:0.16 alpha:1];
-    UIView*npl=[[UIView alloc] initWithFrame:CGRectMake(0,0,W,0.5f)]; npl.backgroundColor=[SpotTheme bg]; [_npBar addSubview:npl];
-    _npCover=[[UIView alloc] initWithFrame:CGRectMake(8,8,36,36)]; _npCover.backgroundColor=[SpotTheme card]; _npCover.layer.cornerRadius=3; _npCover.clipsToBounds=YES; [_npBar addSubview:_npCover];
-    _npTitle=[[UILabel alloc] initWithFrame:CGRectMake(54,9,W-54-90,18)]; _npTitle.font=[UIFont boldSystemFontOfSize:13]; _npTitle.textColor=[SpotTheme ink]; [_npBar addSubview:_npTitle];
-    _npArtist=[[UILabel alloc] initWithFrame:CGRectMake(54,27,W-54-90,16)]; _npArtist.font=[SpotTheme sub]; _npArtist.textColor=[SpotTheme muted]; [_npBar addSubview:_npArtist];
+    _npBar=[[UIToolbar alloc] initWithFrame:CGRectMake(0,H-tabH-npH,W,npH)];
+    [(UIToolbar*)_npBar setBarStyle:UIBarStyleDefault];
+    [(UIToolbar*)_npBar setTranslucent:NO];
+    _npCover=[[UIView alloc] initWithFrame:CGRectMake(2,2,44,44)]; _npCover.backgroundColor=[UIColor colorWithWhite:1 alpha:0.30]; _npCover.clipsToBounds=YES; [_npBar addSubview:_npCover];
+    _npTitle=[[UILabel alloc] initWithFrame:CGRectMake(54,7,W-54-90,17)]; _npTitle.font=[UIFont boldSystemFontOfSize:13]; _npTitle.textColor=[UIColor whiteColor]; _npTitle.backgroundColor=[UIColor clearColor]; [_npBar addSubview:_npTitle];
+    _npArtist=[[UILabel alloc] initWithFrame:CGRectMake(54,24,W-54-90,15)]; _npArtist.font=[SpotTheme sub]; _npArtist.textColor=[UIColor colorWithWhite:1 alpha:0.78]; _npArtist.backgroundColor=[UIColor clearColor]; [_npBar addSubview:_npArtist];
     UIButton*npTap=[UIButton buttonWithType:UIButtonTypeCustom]; npTap.frame=_npBar.bounds; [npTap addTarget:self action:@selector(openPlayer) forControlEvents:UIControlEventTouchUpInside]; [_npBar addSubview:npTap];
     // Warteschlange links neben Play/Pause (öffnet dieselbe Ansicht wie im Player)
-    UIButton*npQ=[UIButton buttonWithType:UIButtonTypeCustom]; npQ.frame=CGRectMake(W-84,8,36,36);
-    UIGraphicsBeginImageContextWithOptions(CGSizeMake(20,16),NO,0); [[SpotTheme ink] setFill];
-    for(int i=0;i<3;i++){ UIRectFill(CGRectMake(5,1+i*6,15,2)); UIRectFill(CGRectMake(0,1+i*6,2,2)); }
-    [npQ setImage:UIGraphicsGetImageFromCurrentImageContext() forState:UIControlStateNormal]; UIGraphicsEndImageContext();
+    UIButton*npQ=[UIButton buttonWithType:UIButtonTypeCustom]; npQ.frame=CGRectMake(W-84,6,36,36);
+    [npQ setImage:MMTintedIcon(@"lucide-list",[UIColor whiteColor]) forState:UIControlStateNormal];
     [npQ addTarget:self action:@selector(openQueue) forControlEvents:UIControlEventTouchUpInside]; [_npBar addSubview:npQ];
-    _npPlay=[UIButton buttonWithType:UIButtonTypeCustom]; _npPlay.frame=CGRectMake(W-44,8,36,36);
+    _npPlay=[UIButton buttonWithType:UIButtonTypeCustom]; _npPlay.frame=CGRectMake(W-44,6,36,36);
     [self drawNpPlay];
     [_npPlay addTarget:self action:@selector(npTogglePlay) forControlEvents:UIControlEventTouchUpInside];
     [_npBar addSubview:_npPlay];
     _npSpinner=[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleWhite];
-    _npSpinner.frame=CGRectMake(W-44,8,36,36); _npSpinner.hidesWhenStopped=YES; [_npBar addSubview:_npSpinner];
-    _npLoad=[[UIView alloc] initWithFrame:CGRectMake(0,0,0,2)]; _npLoad.backgroundColor=[SpotTheme green]; _npLoad.hidden=YES; [_npBar addSubview:_npLoad];
+    _npSpinner.frame=CGRectMake(W-44,6,36,36); _npSpinner.hidesWhenStopped=YES; [_npBar addSubview:_npSpinner];
+    _npLoad=[[UIView alloc] initWithFrame:CGRectMake(0,0,0,2)]; _npLoad.backgroundColor=[UIColor whiteColor]; _npLoad.hidden=YES; [_npBar addSubview:_npLoad];
     _npBar.hidden=YES; _npBar.clipsToBounds=YES;
     [self.view addSubview:_npBar];
     // waagrecht wischen: Cover + Titel folgen dem Finger; nach links = nächster, nach rechts = vorheriger Titel (Play-Knopf bleibt stehen)
@@ -248,31 +255,38 @@ MM_IOS6_END
 
     }
     // globale Offline-Download-Leiste - immer sichtbar wenn aktiv, direkt über der Now-Playing-Leiste
-    _dlBar=[[UIView alloc] initWithFrame:CGRectMake(0,H-tabH-npH-24,W,24)];
-    _dlBar.backgroundColor=[UIColor colorWithRed:0.10 green:0.10 blue:0.11 alpha:1];
-    _dlLbl=[[UILabel alloc] initWithFrame:CGRectMake(12,0,W-24,22)]; _dlLbl.font=[UIFont boldSystemFontOfSize:11]; _dlLbl.textColor=[SpotTheme ink]; _dlLbl.textAlignment=NSTextAlignmentCenter; [_dlBar addSubview:_dlLbl];
-    _dlProg=[[UIView alloc] initWithFrame:CGRectMake(0,22,0,2)]; _dlProg.backgroundColor=[SpotTheme green]; [_dlBar addSubview:_dlProg];
+    _dlBar=[[UIToolbar alloc] initWithFrame:CGRectMake(0,H-tabH-npH-24,W,24)];
+    [(UIToolbar*)_dlBar setBarStyle:UIBarStyleDefault];
+    [(UIToolbar*)_dlBar setTranslucent:NO];
+    _dlLbl=[[UILabel alloc] initWithFrame:CGRectMake(12,0,W-24,22)]; _dlLbl.font=[UIFont boldSystemFontOfSize:11]; _dlLbl.textColor=[UIColor whiteColor]; _dlLbl.backgroundColor=[UIColor clearColor]; _dlLbl.textAlignment=NSTextAlignmentCenter; [_dlBar addSubview:_dlLbl];
+    _dlProg=[[UIView alloc] initWithFrame:CGRectMake(0,22,0,2)]; _dlProg.backgroundColor=[UIColor whiteColor]; [_dlBar addSubview:_dlProg];
     _dlBar.hidden=YES; [self.view addSubview:_dlBar];
+    [OJTheme applyToToolbar:(UIToolbar*)_dlBar];
+    if(_npBar) [OJTheme applyToToolbar:(UIToolbar*)_npBar];
 
     if(!MMIsPad()){
     // Tab-Leiste
-    _tabBar=[[UIView alloc] initWithFrame:CGRectMake(0,H-tabH,W,tabH)];
-    _tabBar.backgroundColor=[SpotTheme bar];
-    UIView*tl=[[UIView alloc] initWithFrame:CGRectMake(0,0,W,0.5f)]; tl.backgroundColor=[SpotTheme line]; [_tabBar addSubview:tl];
-    _tabBtns=[NSMutableArray array]; NSUInteger nTabs=_tabs.count; CGFloat tw=W/nTabs;
+    UITabBar *nativeTab=[[UITabBar alloc] initWithFrame:CGRectMake(0,H-tabH,W,tabH)];
+    nativeTab.delegate=(id<UITabBarDelegate>)self;
+    _tabBar=nativeTab;
+    _tabBtns=[NSMutableArray array]; NSUInteger nTabs=_tabs.count;
+    NSArray *lucide=@[@"lucide-home",@"lucide-browse",@"lucide-search",@"lucide-library"];
     for(NSUInteger i=0;i<nTabs;i++){
-        UIButton*b=[UIButton buttonWithType:UIButtonTypeCustom]; b.frame=CGRectMake(i*tw,0,tw,tabH); b.tag=i;
-        [b addTarget:self action:@selector(tapTab:) forControlEvents:UIControlEventTouchUpInside];
-        UIImageView*iv=[[UIImageView alloc] initWithFrame:CGRectMake((tw-24)/2,8,24,24)]; iv.tag=99; [b addSubview:iv];
-        UILabel*l=[[UILabel alloc] initWithFrame:CGRectMake(0,33,tw,12)]; l.text=titles[i]; l.font=[SpotTheme tab]; l.textAlignment=NSTextAlignmentCenter; l.tag=98; [b addSubview:l];
-        [_tabBar addSubview:b]; [_tabBtns addObject:b];
+        UIImage *img=MMTintedIcon(lucide[i],[UIColor whiteColor]);
+        if(!img) img=MMTabIcon(_tabs[i],[UIColor whiteColor],24);
+        UITabBarItem*it=[[UITabBarItem alloc] initWithTitle:titles[i] image:img tag:i];
+        [_tabBtns addObject:it];
     }
+    nativeTab.items=_tabBtns;
+    nativeTab.selectedImageTintColor=[OJTheme accentColor];
+    nativeTab.selectedItem=_tabBtns[0];
     [self.view addSubview:_tabBar];
     } else [self buildPadShell];
     [self selectTab:0];
     [self restoreState];
     [MMSpotify startNetworkWatch];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(networkChanged:) name:@"MMNetworkChanged" object:nil];
+    [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(themeChanged) name:OJThemeDidChangeNotification object:nil];
     // Hinweise, warum nichts spielt (je einmal pro App-Start, kommt aus MMSpotify)
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(portsBlocked) name:@"MMSpotifyPortsBlocked" object:nil];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(notPremium) name:@"MMSpotifyNotPremium" object:nil];
@@ -340,16 +354,28 @@ MM_IOS6_END
     else [self playTrackId:_curId title:_curTitle artist:_curArtist cover:_curCover];
 }
 
-- (void)tapTab:(UIButton *)b { [self selectTab:b.tag]; }
+- (void)themeChanged {
+    _themeDirty=YES;
+    [[UIApplication sharedApplication] setStatusBarStyle:([OJTheme darkMode]?UIStatusBarStyleBlackOpaque:UIStatusBarStyleDefault) animated:NO];
+    self.view.backgroundColor=[SpotTheme pageBackground];
+    [OJTheme applyToToolbar:(UIToolbar*)_npBar];
+    [OJTheme applyToToolbar:(UIToolbar*)_dlBar];
+    if(_tabBar) [(UITabBar*)_tabBar setSelectedImageTintColor:[OJTheme accentColor]];
+}
+- (void)reloadTabControllers {
+    UIViewController *old=_vcs[_sel];
+    [old.view removeFromSuperview];
+    _vcs=[NSMutableArray arrayWithObjects:[[MMStartController alloc] init],[[MMBrowseController alloc] init],[[MMSearchController alloc] init],[[MMLibraryController alloc] init],nil];
+}
+- (void)tabBar:(UITabBar *)tabBar didSelectItem:(UITabBarItem *)item { [self selectTab:item.tag]; }
 - (void)selectTab:(NSInteger)idx {
+    if(_themeDirty){ _themeDirty=NO; [self reloadTabControllers]; }
     [self popContentImmediate];   // offene Playlist schließen beim Tab-Wechsel
     [[_vcs[_sel] view] removeFromSuperview];
     _sel=idx;
     UIViewController*vc=_vcs[idx]; [self fitPage:vc]; [_content addSubview:vc.view]; [self tabShown];
     [_sidebar setSelectedKey:_tabs[idx]];
-    for(NSUInteger i=0;i<_tabBtns.count;i++){ UIButton*b=_tabBtns[i]; UIColor*c=((NSInteger)i==idx)?[SpotTheme ink]:[SpotTheme faint];
-        ((UIImageView*)[b viewWithTag:99]).image=MMTabIcon(_tabs[i],c,24);
-        ((UILabel*)[b viewWithTag:98]).textColor=c; }
+    if(_tabBar) [(UITabBar*)_tabBar setSelectedItem:(idx>=0 && idx<(NSInteger)_tabBtns.count)?_tabBtns[idx]:nil];
 }
 
 - (void)showNowPlayingTitle:(NSString *)title artist:(NSString *)artist {
@@ -439,7 +465,7 @@ MM_IOS6_END
     UIViewController*vc=[_pushedStack lastObject]; if(!vc)return; [_pushedStack removeLastObject];
     if(!_pushedStack.count) [_sidebar setSelectedKey:_tabs[_sel]];
     [UIView animateWithDuration:0.25 animations:^{ vc.view.frame=CGRectOffset(vc.view.frame,vc.view.frame.size.width,0); }
-                     completion:^(BOOL x){ [vc.view removeFromSuperview]; if(!_pushedStack.count) [self tabShown]; }];
+                     completion:^(BOOL x){ [vc.view removeFromSuperview]; if(!_pushedStack.count){ if(_themeDirty){ _themeDirty=NO; [self reloadTabControllers]; [self selectTab:_sel]; } else [self tabShown]; } }];
 }
 - (BOOL)hasPushedContent { return _pushedStack.count>0; }
 // Tab-Seite wieder sichtbar: die Startseite zeichnet nur sichtbar neu und holt verdeckte Änderungen hier nach
@@ -636,7 +662,7 @@ static NSArray* shuffledFrom(NSArray*list,NSInteger idx){
     for(UIView*v in _npCover.subviews)[v removeFromSuperview];
     if(cover.length)[self loadNpCover:cover];
     if(_player)[_player updateTitle:title artist:artist cover:cover];   // SOFORT mit bekannten Daten (nicht erst nach fetchTrack)
-    [self updateNowPlaying];
+    dispatch_async(dispatch_get_main_queue(), ^{ [self updateNowPlaying]; });
     // echte Metadaten + Cover nachladen - feilt nach, nur wenn noch derselbe Track aktuell ist
     [MMSpotify fetchTrack:trackId completion:^(NSDictionary*info,NSString*e){
         if(info && [trackId isEqualToString:_curId]){   // Schutz gegen veraltete Antwort bei schnellem Skippen
@@ -656,15 +682,31 @@ static NSArray* shuffledFrom(NSArray*list,NSInteger idx){
     // echten Ton starten -> Spinner während des Ladens
     _npPlay.hidden=YES; [_npSpinner startAnimating]; _loading=YES; [self showLoadProgress:0]; [self padBarRefresh];
     _playStartTS=0;
-    [MMSpotify playTrack:trackId stream:(_pendingSeek<=0) completion:^(BOOL ok,NSString*e){   // Fortsetzen an gespeicherter Stelle: erst ganz laden (Spulen braucht die Datei)
-
-        [_npSpinner stopAnimating]; _npPlay.hidden=NO; _loading=NO; if(![MMAudio isBuffering]) [self showLoadProgress:-1];   // spielt schon, lädt noch: grün bleibt
-        if(!ok) [self showPlayError:e?:@""];
-        if(ok){ _playStartTS=[NSDate timeIntervalSinceReferenceDate]; if(_pendingSeek>0){ [MMAudio seekTo:_pendingSeek]; _pendingSeek=0; } [self prefetchNext]; [self saveState]; }
-        [self drawNpPlay]; [self updateNowPlaying];
-    }];
+    dispatch_async(dispatch_get_main_queue(), ^{
+        [MMSpotify playTrack:trackId stream:(_pendingSeek<=0) completion:^(BOOL ok,NSString*e){   // Fortsetzen an gespeicherter Stelle: erst ganz laden (Spulen braucht die Datei)
+            [_npSpinner stopAnimating]; _npPlay.hidden=NO; _loading=NO; if(![MMAudio isBuffering]) [self showLoadProgress:-1];   // spielt schon, lädt noch: grün bleibt
+            if(!ok) [self showPlayError:e?:@""];
+            if(ok){ _playStartTS=[NSDate timeIntervalSinceReferenceDate]; if(_pendingSeek>0){ [MMAudio seekTo:_pendingSeek]; _pendingSeek=0; } [self prefetchNext]; [self saveState]; }
+            [self drawNpPlay]; [self updateNowPlaying];
+        }];
+    });
 }
 
+- (void)applyCoverTint:(UIColor *)c {
+    CGFloat r=0,g=0,b=0,a=1;
+    if(!c || ![c getRed:&r green:&g blue:&b alpha:&a]) return;
+    UIColor *bar=[UIColor colorWithRed:r*0.74 green:g*0.74 blue:b*0.74 alpha:1];
+    if(_npBar){
+        [(UIToolbar*)_npBar setBarStyle:UIBarStyleBlack];
+        [(UIToolbar*)_npBar setTintColor:nil];
+        [(UIToolbar*)_npBar setBackgroundImage:[OJTheme gradientButtonImageWithColor:bar height:_npH] forToolbarPosition:UIToolbarPositionAny barMetrics:UIBarMetricsDefault];
+    }
+    if(_dlBar){
+        [(UIToolbar*)_dlBar setBarStyle:UIBarStyleBlack];
+        [(UIToolbar*)_dlBar setTintColor:nil];
+        [(UIToolbar*)_dlBar setBackgroundImage:[OJTheme gradientButtonImageWithColor:bar height:24] forToolbarPosition:UIToolbarPositionAny barMetrics:UIBarMetricsDefault];
+    }
+}
 - (void)loadNpCover:(NSString *)url {
     if(!url.length) return;
     [MMCovers load:url completion:^(UIImage*img){
@@ -672,6 +714,7 @@ static NSArray* shuffledFrom(NSArray*list,NSInteger idx){
         for(UIView*v in _npCover.subviews)[v removeFromSuperview];
         UIImageView*iv=[[UIImageView alloc] initWithFrame:_npCover.bounds];
         iv.image=img; iv.contentMode=UIViewContentModeScaleAspectFill; [_npCover addSubview:iv];
+        [self applyCoverTint:AverageColorOfImage(img)];
     }];
 }
 
@@ -695,7 +738,7 @@ static NSArray* shuffledFrom(NSArray*list,NSInteger idx){
 }
 - (void)drawNpPlay {
     UIGraphicsBeginImageContextWithOptions(CGSizeMake(20,20),NO,0);
-    [[SpotTheme ink] setFill];
+    [[UIColor whiteColor] setFill];
     if([MMAudio isPlaying]){ // Pause
         [[UIBezierPath bezierPathWithRect:CGRectMake(5,4,3.5,12)] fill];
         [[UIBezierPath bezierPathWithRect:CGRectMake(11.5,4,3.5,12)] fill];
@@ -715,10 +758,10 @@ static NSArray* shuffledFrom(NSArray*list,NSInteger idx){
     [[[UIAlertView alloc] initWithTitle:L(@"Can't reach Spotify") message:L(@"This network seems to block Spotify's ports (4070, 443 and 80), so songs can't load. Library and search still work. Try another Wi-Fi or mobile data.") delegate:nil cancelButtonTitle:L(@"OK") otherButtonTitles:nil] show];
 }
 - (void)keysRefused {
-    [[[UIAlertView alloc] initWithTitle:L(@"Your Spotify account is too new") message:L(@"Spotify doesn't give song keys to new accounts in older apps like Spotify6, so songs can't play or download. Library and search still work.\n\nSpotify blocks this on their side, so Spotify6 can't fix it. To play music, log in with an older Premium account (Settings, Log out). If your account isn't new, try again later.") delegate:nil cancelButtonTitle:L(@"OK") otherButtonTitles:nil] show];
+    [[[UIAlertView alloc] initWithTitle:L(@"Your Spotify account is too new") message:L(@"Spotify doesn't give song keys to new accounts in older apps like Spofity, so songs can't play or download. Library and search still work.\n\nSpotify blocks this on their side, so Spofity can't fix it. To play music, log in with an older Premium account (Settings, Log out). If your account isn't new, try again later.") delegate:nil cancelButtonTitle:L(@"OK") otherButtonTitles:nil] show];
 }
 - (void)notPremium {
-    [[[UIAlertView alloc] initWithTitle:L(@"Spotify Premium needed") message:LF(@"Your Spotify account is \"%@\", not Premium. Spotify only lets Premium accounts play songs in other apps like Spotify6.",[MMSpotify productType]?:@"?") delegate:nil cancelButtonTitle:L(@"OK") otherButtonTitles:nil] show];
+    [[[UIAlertView alloc] initWithTitle:L(@"Spotify Premium needed") message:LF(@"Your Spotify account is \"%@\", not Premium. Spotify only lets Premium accounts play songs in other apps like Spofity.",[MMSpotify productType]?:@"?") delegate:nil cancelButtonTitle:L(@"OK") otherButtonTitles:nil] show];
 }
 // kurzer Grund in der Leiste unten, wenn ein Song nicht startet (statt endlosem Kreisel)
 - (void)showPlayError:(NSString *)e {

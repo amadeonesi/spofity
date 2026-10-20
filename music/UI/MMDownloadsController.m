@@ -1,5 +1,7 @@
 #import "MMDownloadsController.h"
 #import "SpotTheme.h"
+#import "OJTheme.h"
+#import "MMNativeUI.h"
 #import "MMLayout.h"
 #import "MMSpotify.h"
 #import "MMRootController.h"
@@ -23,16 +25,15 @@
 
 - (void)loadView {
     self.view=[[UIView alloc] initWithFrame:MMPageFrame(YES)];
-    self.view.backgroundColor=[SpotTheme bg];
+    self.view.backgroundColor=[SpotTheme pageBackground];
     CGFloat W=self.view.bounds.size.width, H=self.view.bounds.size.height;
-    UIButton*back=[UIButton buttonWithType:UIButtonTypeCustom]; back.frame=CGRectMake(8,8,80,34);
-    [SpotTheme styleBackButton:back]; back.titleLabel.font=[UIFont systemFontOfSize:14];
-    [back addTarget:self action:@selector(close) forControlEvents:UIControlEventTouchUpInside]; [self.view addSubview:back];
-    UILabel*nav=[[UILabel alloc] initWithFrame:CGRectMake(90,8,W-180,34)]; nav.text=L(@"Downloads"); nav.font=[UIFont boldSystemFontOfSize:16];
-    nav.textColor=[SpotTheme ink]; nav.textAlignment=NSTextAlignmentCenter; nav.backgroundColor=[UIColor clearColor]; [self.view addSubview:nav];
+    UINavigationBar *navBar=[MMNativeUI navigationBarWithTitle:L(@"Downloads") width:W];
+    navBar.topItem.leftBarButtonItem=[MMNativeUI backItemTarget:self action:@selector(close)];
+    [self.view addSubview:navBar];
 
-    _table=[[UITableView alloc] initWithFrame:CGRectMake(0,46,W,H-46) style:UITableViewStylePlain];
-    _table.backgroundColor=[SpotTheme bg]; _table.separatorColor=[SpotTheme line]; _table.rowHeight=60;
+    _table=[[UITableView alloc] initWithFrame:CGRectMake(0,44,W,H-44) style:UITableViewStyleGrouped];
+    [OJTheme applyToGroupedTableView:_table];
+    _table.backgroundColor=[UIColor clearColor]; _table.separatorColor=[SpotTheme line]; _table.rowHeight=60;
     _table.dataSource=self; _table.delegate=self; _table.contentInset=_table.scrollIndicatorInsets=UIEdgeInsetsMake(0,0,MMPageBottomInset(90),0);
     _table.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight; [self.view addSubview:_table];
 
@@ -98,7 +99,7 @@ static NSString* fmtEta(double s){
 }
 - (CGFloat)tableView:(UITableView *)tv heightForHeaderInSection:(NSInteger)s { return [self tableView:tv numberOfRowsInSection:s]?36:0; }
 - (UIView *)tableView:(UITableView *)tv viewForHeaderInSection:(NSInteger)s {
-    UIView*v=[[UIView alloc] initWithFrame:CGRectMake(0,0,tv.bounds.size.width,36)]; v.backgroundColor=[SpotTheme bg];
+    UIView*v=[[UIView alloc] initWithFrame:CGRectMake(0,0,tv.bounds.size.width,36)]; v.backgroundColor=[UIColor clearColor];
     UILabel*l=[[UILabel alloc] initWithFrame:CGRectMake(16,10,tv.bounds.size.width-32,22)]; l.backgroundColor=[UIColor clearColor];
     l.font=[UIFont boldSystemFontOfSize:17]; l.textColor=[SpotTheme ink];
     l.text=s==0?L(@"Downloading"):LF(@"Downloaded · %lu songs · %@",(unsigned long)_done.count,[MMTrackListController fmtBytes:_doneBytes]);
@@ -108,7 +109,7 @@ static NSString* fmtEta(double s){
     CGFloat W=tv.bounds.size.width;
     if(ip.section==0 && ip.row==0){   // Fortschritt
         UITableViewCell*c=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:nil];
-        c.backgroundColor=[SpotTheme bg]; c.selectionStyle=UITableViewCellSelectionStyleNone;
+        c.backgroundColor=[SpotTheme card]; c.selectionStyle=UITableViewCellSelectionStyleNone;
         NSInteger d=[_status[@"done"] integerValue], t=[_status[@"total"] integerValue];
         UILabel*l=[[UILabel alloc] initWithFrame:CGRectMake(16,10,W-32,20)]; l.backgroundColor=[UIColor clearColor]; l.font=[UIFont systemFontOfSize:14]; l.textColor=[SpotTheme muted];
         NSString*eta=fmtEta([_status[@"eta"] doubleValue]);
@@ -118,12 +119,12 @@ static NSString* fmtEta(double s){
         return c;
     }
     UITableViewCell*c=[tv dequeueReusableCellWithIdentifier:MMCellID(@"s",tv)];
-    if(!c){ c=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:MMCellID(@"s",tv)]; c.backgroundColor=[SpotTheme bg]; c.selectionStyle=UITableViewCellSelectionStyleNone;
-        UIImageView*cov=[[UIImageView alloc] initWithFrame:CGRectMake(16,8,44,44)]; cov.tag=1; cov.backgroundColor=[SpotTheme card]; cov.contentMode=UIViewContentModeScaleAspectFill; cov.clipsToBounds=YES; [c.contentView addSubview:cov];
+    if(!c){ c=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:MMCellID(@"s",tv)]; c.backgroundColor=[SpotTheme card]; c.selectionStyle=UITableViewCellSelectionStyleNone;
+        UIImageView*cov=[[UIImageView alloc] initWithFrame:CGRectMake(6,8,44,44)]; cov.tag=1; cov.backgroundColor=[SpotTheme card]; cov.contentMode=UIViewContentModeScaleAspectFill; cov.clipsToBounds=YES; [c.contentView addSubview:cov];
         UILabel*ti=[[UILabel alloc] initWithFrame:CGRectMake(72,11,W-72-70,20)]; ti.tag=2; ti.font=[UIFont boldSystemFontOfSize:15]; ti.textColor=[SpotTheme ink]; ti.backgroundColor=[UIColor clearColor]; [c.contentView addSubview:ti];
         UILabel*ar=[[UILabel alloc] initWithFrame:CGRectMake(72,31,W-72-70,18)]; ar.tag=3; ar.font=[SpotTheme sub]; ar.textColor=[SpotTheme muted]; ar.backgroundColor=[UIColor clearColor]; [c.contentView addSubview:ar];
-        UILabel*sz=[[UILabel alloc] initWithFrame:CGRectMake(W-66,0,52,60)]; sz.tag=4; sz.font=[UIFont systemFontOfSize:12]; sz.textColor=[SpotTheme faint]; sz.textAlignment=NSTextAlignmentRight; sz.backgroundColor=[UIColor clearColor]; [c.contentView addSubview:sz];
-        UIActivityIndicatorView*sp=[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleWhite]; sp.tag=5; sp.center=CGPointMake(W-30,30); [c.contentView addSubview:sp]; }
+        UILabel*sz=[[UILabel alloc] initWithFrame:CGRectMake(W-82,0,52,60)]; sz.tag=4; sz.font=[UIFont systemFontOfSize:12]; sz.textColor=[SpotTheme faint]; sz.textAlignment=NSTextAlignmentRight; sz.backgroundColor=[UIColor clearColor]; [c.contentView addSubview:sz];
+        UIActivityIndicatorView*sp=[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleGray]; sp.tag=5; sp.center=CGPointMake(W-30,30); [c.contentView addSubview:sp]; }
     NSString*tid; NSString*size=@""; BOOL now=NO;
     if(ip.section==0){ tid=[self queue][ip.row-1]; now=(ip.row==1); }
     else { NSDictionary*d=_done[ip.row]; tid=d[@"id"]; size=[MMTrackListController fmtBytes:[d[@"bytes"] longLongValue]]; }

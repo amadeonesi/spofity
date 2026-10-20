@@ -44,7 +44,7 @@ static UIImage* queueGlyph(void){
 
 - (id)initWithFrame:(CGRect)f {
     if(!(self=[super initWithFrame:f])) return nil;
-    self.backgroundColor=[SpotTheme bar];
+    self.backgroundColor=[SpotTheme barBackgroundForHeight:self.bounds.size.height];
     UIView*ln=[[UIView alloc] initWithFrame:CGRectMake(0,0,f.size.width,0.5)]; ln.backgroundColor=[SpotTheme line]; ln.autoresizingMask=UIViewAutoresizingFlexibleWidth; [self addSubview:ln];
     _cover=[[UIImageView alloc] init]; _cover.backgroundColor=[SpotTheme card]; _cover.clipsToBounds=YES; _cover.contentMode=UIViewContentModeScaleAspectFill; [self addSubview:_cover];
     _title=[[UILabel alloc] init]; _title.font=[UIFont boldSystemFontOfSize:14]; _title.textColor=[SpotTheme ink]; _title.backgroundColor=[UIColor clearColor]; [self addSubview:_title];

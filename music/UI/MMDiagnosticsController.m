@@ -1,5 +1,6 @@
 #import "MMDiagnosticsController.h"
 #import "SpotTheme.h"
+#import "MMNativeUI.h"
 #import "MMLayout.h"
 #import "MMSpotify.h"
 #import "MMRootController.h"
@@ -14,25 +15,22 @@
 
 - (void)loadView {
     self.view=[[UIView alloc] initWithFrame:MMPageFrame(YES)];
-    self.view.backgroundColor=[SpotTheme bg];
+    self.view.backgroundColor=[SpotTheme pageBackground];
     CGFloat W=self.view.bounds.size.width, H=self.view.bounds.size.height;
-    UIButton*back=[UIButton buttonWithType:UIButtonTypeCustom]; back.frame=CGRectMake(8,8,80,34);
-    [SpotTheme styleBackButton:back]; back.titleLabel.font=[UIFont systemFontOfSize:14];
-    [back addTarget:self action:@selector(close) forControlEvents:UIControlEventTouchUpInside]; [self.view addSubview:back];
-    UILabel*nav=[[UILabel alloc] initWithFrame:CGRectMake(90,8,W-180,34)]; nav.text=L(@"Debug info"); nav.font=[UIFont boldSystemFontOfSize:16];
-    nav.textColor=[SpotTheme ink]; nav.textAlignment=NSTextAlignmentCenter; nav.backgroundColor=[UIColor clearColor]; [self.view addSubview:nav];
-    UIButton*copy=[UIButton buttonWithType:UIButtonTypeCustom]; copy.frame=CGRectMake(W-72,8,64,34);
-    [copy setTitle:L(@"Copy") forState:UIControlStateNormal]; [copy setTitleColor:[SpotTheme green] forState:UIControlStateNormal];
-    copy.titleLabel.font=[UIFont boldSystemFontOfSize:15]; [copy addTarget:self action:@selector(copyText) forControlEvents:UIControlEventTouchUpInside]; [self.view addSubview:copy];
+    UINavigationBar *navBar=[MMNativeUI navigationBarWithTitle:L(@"Debug info") width:W];
+    navBar.topItem.leftBarButtonItem=[MMNativeUI backItemTarget:self action:@selector(close)];
+    navBar.topItem.rightBarButtonItem=[MMNativeUI itemWithTitle:L(@"Copy") target:self action:@selector(copyText)];
+    [self.view addSubview:navBar];
 
     // Verbindungstest: prüft Netz, Spotify-Server/Ports, Song-Schlüssel und Download, jeweils mit Zeitlimit
-    _testBtn=[UIButton buttonWithType:UIButtonTypeCustom]; _testBtn.frame=CGRectMake(16,50,W-32,36); _testBtn.layer.cornerRadius=18;
-    _testBtn.backgroundColor=[SpotTheme ink]; _testBtn.titleLabel.font=[UIFont boldSystemFontOfSize:14];
-    [_testBtn setTitle:L(@"Run connection test") forState:UIControlStateNormal]; [_testBtn setTitleColor:[UIColor blackColor] forState:UIControlStateNormal];
+    _testBtn=[UIButton buttonWithType:UIButtonTypeRoundedRect];
+    _testBtn.frame=CGRectMake(16,50,W-32,36);
+    _testBtn.titleLabel.font=[UIFont boldSystemFontOfSize:14];
+    [_testBtn setTitle:L(@"Run connection test") forState:UIControlStateNormal];
     [_testBtn addTarget:self action:@selector(runTest) forControlEvents:UIControlEventTouchUpInside]; [self.view addSubview:_testBtn];
 
     _text=[[UITextView alloc] initWithFrame:CGRectMake(0,94,W,H-94)];
-    _text.editable=NO; _text.backgroundColor=[SpotTheme bg]; _text.textColor=[SpotTheme ink];
+    _text.editable=NO; _text.backgroundColor=[SpotTheme card]; _text.textColor=[SpotTheme ink];
     _text.font=[UIFont fontWithName:@"Courier" size:10]; _text.contentInset=UIEdgeInsetsMake(0,0,MMPageBottomInset(90),0);
     _text.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight; [self.view addSubview:_text];
     _text.text=[self report];
@@ -42,7 +40,7 @@
     NSDictionary*info=[[NSBundle mainBundle] infoDictionary];
     NSDateFormatter*df=[[NSDateFormatter alloc] init]; df.dateFormat=@"yyyy-MM-dd HH:mm";
     NSMutableString*r=[NSMutableString string];
-    [r appendFormat:@"Spotify6 %@ · %@ · iOS %@\n",info[@"CFBundleShortVersionString"]?:@"?",[MMSpotify deviceModel],[UIDevice currentDevice].systemVersion];
+    [r appendFormat:@"Spofity %@ · %@ · iOS %@\n",info[@"CFBundleShortVersionString"]?:@"?",[MMSpotify deviceModel],[UIDevice currentDevice].systemVersion];
     [r appendFormat:@"Account: %@ · Country: %@\n",[MMSpotify productType]?:@"unknown",[MMSpotify country]?:@"?"];
     [r appendFormat:@"Song keys: %@\n",[MMSpotify keyStatus]];
     [r appendFormat:@"Network: %@ · Free: %@\n",[MMSpotify networkReachable]?@"online":@"offline",[MMTrackListController fmtBytes:[MMSpotify freeDiskBytes]]];

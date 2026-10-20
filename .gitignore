@@ -10,3 +10,13 @@ obj/
 backup*/
 .spotify-*
 *.log
+# Native iOS 5/6 build
+build/
+Payload/
+*.ipa
+*.o
+*.d
+# Local-only icon source (never commit)
+USE-THIS-ICON.PNG
+/Icon.png
+TEMP-DELETE-AFTER-USE/

@@ -1,5 +1,7 @@
 #import "MMLibraryController.h"
 #import "SpotTheme.h"
+#import "OJTheme.h"
+#import "MMNativeUI.h"
 #import "MMLayout.h"
 #import "MMSpotify.h"
 #import "MMTrackListController.h"
@@ -32,29 +34,17 @@
 
 - (void)loadView {
     self.view=[[UIView alloc] initWithFrame:MMPageFrame(NO)];
-    self.view.backgroundColor=[SpotTheme bg];
+    self.view.backgroundColor=[SpotTheme pageBackground];
     CGFloat W=self.view.bounds.size.width, H=self.view.bounds.size.height;
 
-    UILabel*nav=[[UILabel alloc] initWithFrame:CGRectMake(0,8,W,34)];
-    nav.text=L(@"Library"); nav.font=[UIFont boldSystemFontOfSize:16]; nav.textColor=[SpotTheme ink]; nav.textAlignment=NSTextAlignmentCenter; [self.view addSubview:nav];
+    UINavigationBar *navBar=[MMNativeUI navigationBarWithTitle:L(@"Library") width:W]; [self.view addSubview:navBar];
 
-    // Zahnrad oben rechts: Einstellungen
-    UIButton*gear=[UIButton buttonWithType:UIButtonTypeCustom]; gear.frame=CGRectMake(W-48,6,44,38);
-    UIGraphicsBeginImageContextWithOptions(CGSizeMake(22,22),NO,0); [[SpotTheme ink] setFill];
-    UIBezierPath*gp=[UIBezierPath bezierPath];
-    for(int i=0;i<16;i++){ CGFloat a=i*M_PI/8-M_PI/16, r=(i%2)?8:10.5; CGPoint q=CGPointMake(11+r*cos(a),11+r*sin(a)); if(i==0)[gp moveToPoint:q]; else [gp addLineToPoint:q]; }
-    [gp closePath]; [gp appendPath:[UIBezierPath bezierPathWithArcCenter:CGPointMake(11,11) radius:3.5 startAngle:0 endAngle:2*M_PI clockwise:NO]];
-    gp.usesEvenOddFillRule=YES; [gp fill];
-    [gear setImage:UIGraphicsGetImageFromCurrentImageContext() forState:UIControlStateNormal]; UIGraphicsEndImageContext();
-    [gear addTarget:self action:@selector(openSettings) forControlEvents:UIControlEventTouchUpInside]; [self.view addSubview:gear];
+    navBar.topItem.leftBarButtonItem=[MMNativeUI itemWithTitle:L(@"Downloads") target:self action:@selector(openDownloads)];
+    navBar.topItem.rightBarButtonItem=[MMNativeUI itemWithTitle:L(@"Settings") target:self action:@selector(openSettings)];
 
-    // Download-Symbol oben links (gegenüber dem Zahnrad): öffnet die Downloads-Seite (laufende + heruntergeladene)
-    _dlBtn=[UIButton buttonWithType:UIButtonTypeCustom]; _dlBtn.frame=CGRectMake(4,6,44,38);
-    [self drawDlBtn];
-    [_dlBtn addTarget:self action:@selector(openDownloads) forControlEvents:UIControlEventTouchUpInside]; [self.view addSubview:_dlBtn];
-
-    _table=[[UITableView alloc] initWithFrame:CGRectMake(0,48,W,H-48) style:UITableViewStylePlain];
-    _table.backgroundColor=[SpotTheme bg]; _table.separatorColor=[SpotTheme line];
+    _table=[[UITableView alloc] initWithFrame:CGRectMake(0,44,W,H-44) style:UITableViewStyleGrouped];
+    [OJTheme applyToGroupedTableView:_table];
+    _table.backgroundColor=[UIColor clearColor]; _table.separatorColor=[SpotTheme line];
     _table.dataSource=self; _table.delegate=self; _table.rowHeight=60; _table.contentInset=UIEdgeInsetsMake(0,0,MMPageBottomInset(84),0);   // Platz für untere Leisten
     _table.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight; [self.view addSubview:_table];
 
@@ -97,7 +87,7 @@
 // Download-Symbol: weiß, grün solange etwas herunterlädt
 - (void)drawDlBtn {
     BOOL on=[MMSpotify isDownloading]; if(_dlBtn.tag==(on?2:1)) return; _dlBtn.tag=on?2:1;
-    UIGraphicsBeginImageContextWithOptions(CGSizeMake(22,22),NO,0); [(on?[SpotTheme green]:[SpotTheme ink]) setStroke];
+    UIGraphicsBeginImageContextWithOptions(CGSizeMake(22,22),NO,0); [(on?[SpotTheme green]:[UIColor whiteColor]) setStroke];
     UIBezierPath*dc=[UIBezierPath bezierPathWithOvalInRect:CGRectMake(1,1,20,20)]; dc.lineWidth=1.6; [dc stroke];
     UIBezierPath*da=[UIBezierPath bezierPath]; da.lineWidth=1.8; da.lineCapStyle=kCGLineCapRound; da.lineJoinStyle=kCGLineJoinRound;
     [da moveToPoint:CGPointMake(11,6)]; [da addLineToPoint:CGPointMake(11,15.5)]; [da moveToPoint:CGPointMake(7,11.5)]; [da addLineToPoint:CGPointMake(11,15.5)]; [da addLineToPoint:CGPointMake(15,11.5)]; [da stroke];
@@ -180,7 +170,7 @@
 - (void)loadMore {
     if(_loadingMore || !_nextPath) return;
     _loadingMore=YES; NSString*p=_nextPath;
-    UIActivityIndicatorView*sp=[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleWhite];
+    UIActivityIndicatorView*sp=[[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleGray];
     sp.frame=CGRectMake(0,0,_table.bounds.size.width,44); [sp startAnimating]; _table.tableFooterView=sp;
     [MMSpotify apiUser:@"GET" path:p body:nil completion:^(NSDictionary*j,NSInteger st){
         _loadingMore=NO; _table.tableFooterView=nil;
@@ -202,8 +192,8 @@
 - (UITableViewCell *)tableView:(UITableView *)tv cellForRowAtIndexPath:(NSIndexPath *)ip {
     UITableViewCell*c=[tv dequeueReusableCellWithIdentifier:MMCellID(@"r",tv)];
     if(!c){ c=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:MMCellID(@"r",tv)];
-        c.backgroundColor=[SpotTheme bg]; c.selectionStyle=UITableViewCellSelectionStyleNone;
-        UIImageView*th=[[UIImageView alloc] initWithFrame:CGRectMake(12,6,48,48)]; th.tag=10; th.contentMode=UIViewContentModeScaleAspectFill; th.clipsToBounds=YES; th.layer.cornerRadius=2; [c.contentView addSubview:th];
+        c.backgroundColor=[SpotTheme card]; c.selectionStyle=UITableViewCellSelectionStyleNone;
+        UIImageView*th=[[UIImageView alloc] initWithFrame:CGRectMake(6,6,48,48)]; th.tag=10; th.contentMode=UIViewContentModeScaleAspectFill; th.clipsToBounds=YES; [c.contentView addSubview:th];
         UILabel*nm=[[UILabel alloc] initWithFrame:CGRectMake(72,0,tv.bounds.size.width-72-40,60)]; nm.tag=11; nm.font=[UIFont boldSystemFontOfSize:16]; nm.textColor=[SpotTheme ink]; [c.contentView addSubview:nm];
         c.accessoryType=UITableViewCellAccessoryNone; }   // keine Pfeile: auf Schwarz kaum sichtbar
     UIImageView*th=(UIImageView*)[c.contentView viewWithTag:10];

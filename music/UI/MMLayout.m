@@ -43,6 +43,17 @@ NSUInteger MMSupportedOrientations(void) {
 }
 
 // ---- Tab-Icons (schlichte Linien-Icons wie Spotify) ----
+UIImage *MMTintedIcon(NSString *name, UIColor *color) {
+    UIImage *img=[UIImage imageNamed:name];
+    if(!img) return nil;
+    UIGraphicsBeginImageContextWithOptions(img.size,NO,0);
+    [img drawAtPoint:CGPointZero];
+    [color setFill];
+    UIRectFillUsingBlendMode(CGRectMake(0,0,img.size.width,img.size.height),kCGBlendModeSourceIn);
+    UIImage *out=UIGraphicsGetImageFromCurrentImageContext();
+    UIGraphicsEndImageContext();
+    return out;
+}
 UIImage *MMTabIcon(NSString *name, UIColor *c, CGFloat s) {
     UIGraphicsBeginImageContextWithOptions(CGSizeMake(s, s), NO, 0);
     CGContextRef ctx = UIGraphicsGetCurrentContext();

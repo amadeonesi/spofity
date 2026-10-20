@@ -1,6 +1,7 @@
 #import "MMPadSidebar.h"
 #import "MMLayout.h"
 #import "SpotTheme.h"
+#import "OJTheme.h"
 #import "MMSpotify.h"
 #import "MMCovers.h"
 #import "MMRecent.h"
@@ -39,7 +40,7 @@ static UIImage* sideIcon(NSString*name, UIColor*c, CGFloat s){
 
 - (id)initWithFrame:(CGRect)f {
     if(!(self=[super initWithFrame:f])) return nil;
-    self.backgroundColor=[UIColor colorWithRed:0.07 green:0.07 blue:0.08 alpha:1];
+    self.backgroundColor=[SpotTheme pageBackground];
     CGFloat W=f.size.width, H=f.size.height;
     _mainKeys=@[@"home",@"browse",@"search",@"library"];
     NSArray*titles=@[L(@"Home"),L(@"Browse"),L(@"Search"),L(@"Library")];
@@ -52,8 +53,9 @@ static UIImage* sideIcon(NSString*name, UIColor*c, CGFloat s){
     hd.backgroundColor=[UIColor clearColor]; hd.text=[L(@"Recent Playlists") uppercaseString]; [self addSubview:hd];
     y+=22;
     CGFloat foot=2*ROW_H+12; _tableY=y; _showCF=YES;
-    _table=[[UITableView alloc] initWithFrame:CGRectMake(0,y,W,H-y-foot) style:UITableViewStylePlain];
-    _table.backgroundColor=[UIColor clearColor]; _table.separatorStyle=UITableViewCellSeparatorStyleNone; _table.rowHeight=PL_ROW_H;
+    _table=[[UITableView alloc] initWithFrame:CGRectMake(0,y,W,H-y-foot) style:UITableViewStyleGrouped];
+    [OJTheme applyToGroupedTableView:_table];
+    _table.backgroundColor=[UIColor clearColor]; _table.separatorStyle=UITableViewCellSeparatorStyleSingleLine; _table.rowHeight=PL_ROW_H;
     _table.dataSource=self; _table.delegate=self; _table.autoresizingMask=UIViewAutoresizingFlexibleHeight|UIViewAutoresizingFlexibleWidth;
     [self addSubview:_table];
     _footLine=[[UIView alloc] initWithFrame:CGRectMake(16,H-foot,W-32,1)]; _footLine.backgroundColor=[SpotTheme line]; [self addSubview:_footLine];
@@ -165,7 +167,7 @@ static UIImage* sideIcon(NSString*name, UIColor*c, CGFloat s){
     if(!c){ c=[[UITableViewCell alloc] initWithStyle:UITableViewCellStyleDefault reuseIdentifier:@"pl"];
         c.selectionStyle=UITableViewCellSelectionStyleNone; c.backgroundColor=[UIColor clearColor];
         UIImageView*iv=[[UIImageView alloc] initWithFrame:CGRectMake(20,(PL_ROW_H-36)/2,36,36)]; iv.tag=1; iv.clipsToBounds=YES;
-        iv.contentMode=UIViewContentModeScaleAspectFill; iv.backgroundColor=[SpotTheme card]; iv.layer.cornerRadius=2; [c.contentView addSubview:iv];
+        iv.contentMode=UIViewContentModeScaleAspectFill; iv.backgroundColor=[SpotTheme card];  [c.contentView addSubview:iv];
         UILabel*l=[[UILabel alloc] init]; l.tag=2; l.font=[UIFont systemFontOfSize:14];
         l.backgroundColor=[UIColor clearColor]; [c.contentView addSubview:l]; }
     UIImageView*iv=(UIImageView*)[c.contentView viewWithTag:1]; UILabel*l=(UILabel*)[c.contentView viewWithTag:2];
@@ -177,9 +179,9 @@ static UIImage* sideIcon(NSString*name, UIColor*c, CGFloat s){
     if(foot){ l.text=[key isEqualToString:@"settings"]?L(@"Settings"):L(@"Cover Flow"); iv.image=sideIcon(key,on?[SpotTheme ink]:[SpotTheme muted],24); }
     else if(ip.row==0){ l.text=L(@"Liked Songs"); [MMCovers likedCoverInto:iv]; }
     else { NSDictionary*p=_playlists[ip.row-1]; l.text=p[@"name"]; iv.accessibilityLabel=p[@"id"];
-        if([p[@"cover"] length]) [MMCovers thumb:p[@"cover"] size:36 radius:2 into:iv];
+        if([p[@"cover"] length]) [MMCovers thumb:p[@"cover"] size:36 radius:0 into:iv];
         else { NSString*pid=p[@"id"]; __weak UIImageView*wiv=iv;   // kein eigenes Bild: Mosaik aus den ersten Songs (wie in der Bibliothek)
-            [MMCovers playlistCover:pid completion:^(NSString*mu){ if(mu.length && [wiv.accessibilityLabel isEqualToString:pid]) [MMCovers thumb:mu size:36 radius:2 into:wiv]; }]; } }
+            [MMCovers playlistCover:pid completion:^(NSString*mu){ if(mu.length && [wiv.accessibilityLabel isEqualToString:pid]) [MMCovers thumb:mu size:36 radius:0 into:wiv]; }]; } }
     l.textColor=on?[SpotTheme ink]:[SpotTheme muted];
     c.contentView.backgroundColor=on?[UIColor colorWithWhite:1 alpha:0.06]:[UIColor clearColor];
     return c;
