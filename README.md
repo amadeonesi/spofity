@@ -4,6 +4,7 @@
 
 <p align="center"><b>spotify, on iOS 5 and 6.</b><br>A native standalone Spotify client for jailbroken iOS 5 and 6, on iPhone, iPod touch and iPad. Now with a skeuomorphic look.</p>
 
+*contains AI generated code*
 ---
 spofity is a fork of Spotify6, the original client project, which uses a more modern UI. spofity, on the other hand, has a more native, skeuomorphic look. Its usability is exactly the same. Nothing else changes.
 
